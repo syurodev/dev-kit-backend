@@ -1,3 +1,35 @@
 spring:
   application:
     name: dev-kit
+  datasource:
+    url: ${DEVKIT_DB_URL:}
+    username: ${DEVKIT_DB_USER:}
+    password: ${DEVKIT_DB_PASSWORD:}
+  liquibase:
+    change-log: classpath:db/changelog/db.changelog-master.yaml
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+
+server:
+  address: ${DEVKIT_SERVER_ADDRESS:127.0.0.1}
+  port: ${DEVKIT_SERVER_PORT:8080}
+  error:
+    include-message: never
+    include-stacktrace: never
+
+devkit:
+  security:
+    issuer: ${DEVKIT_GATEWAY_ISSUER:}
+    jwk-set-uri: ${DEVKIT_GATEWAY_JWK_SET_URI:}
+    audience: ${DEVKIT_GATEWAY_AUDIENCE:devkit-sync-api}
+    upstream-issuer: ${DEVKIT_KEYCLOAK_ISSUER:}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics
+  endpoint:
+    health:
+      show-details: never

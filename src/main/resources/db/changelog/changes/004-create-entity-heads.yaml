@@ -1,0 +1,20 @@
+databaseChangeLog:
+  - changeSet:
+      id: 004-create-entity-heads
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE entity_heads (
+                  id uuid PRIMARY KEY DEFAULT uuidv7(),
+                  account_id uuid NOT NULL,
+                  record_id text NOT NULL,
+                  record_type text NOT NULL,
+                  current_entity_version bigint NOT NULL,
+                  head_seq bigint NOT NULL,
+                  head_idempotency_key text NOT NULL,
+                  updated_at timestamptz NOT NULL,
+                  CONSTRAINT ck_entity_head_version_positive CHECK (current_entity_version > 0)
+              );
+              CREATE UNIQUE INDEX ux_entity_heads_account_record
+                  ON entity_heads (account_id, record_id);

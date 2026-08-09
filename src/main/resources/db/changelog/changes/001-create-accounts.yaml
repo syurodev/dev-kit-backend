@@ -1,0 +1,17 @@
+databaseChangeLog:
+  - changeSet:
+      id: 001-create-accounts
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE accounts (
+                  id uuid PRIMARY KEY DEFAULT uuidv7(),
+                  identity_subject text NOT NULL,
+                  primary_email text,
+                  username text,
+                  created_at timestamptz NOT NULL,
+                  updated_at timestamptz NOT NULL
+              );
+              CREATE UNIQUE INDEX ux_accounts_identity_subject
+                  ON accounts (identity_subject);

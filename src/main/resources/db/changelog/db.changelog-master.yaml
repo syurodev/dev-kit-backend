@@ -1,0 +1,11 @@
+databaseChangeLog:
+  - include:
+      file: db/changelog/changes/001-create-accounts.yaml
+  - include:
+      file: db/changelog/changes/002-create-devices.yaml
+  - include:
+      file: db/changelog/changes/003-create-replication-log.yaml
+  - include:
+      file: db/changelog/changes/004-create-entity-heads.yaml
+  - include:
+      file: db/changelog/changes/005-create-audit-events.yaml

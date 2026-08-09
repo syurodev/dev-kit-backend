@@ -1,0 +1,33 @@
+databaseChangeLog:
+  - changeSet:
+      id: 003-create-replication-log
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE replication_log (
+                  id uuid PRIMARY KEY DEFAULT uuidv7(),
+                  seq bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
+                  account_id uuid NOT NULL,
+                  record_id text NOT NULL,
+                  record_type text NOT NULL,
+                  device_id text NOT NULL,
+                  entity_version bigint NOT NULL,
+                  operation text NOT NULL,
+                  idempotency_key text NOT NULL,
+                  operation_id text NOT NULL,
+                  envelope jsonb NOT NULL,
+                  content_digest bytea NOT NULL,
+                  created_at timestamptz NOT NULL,
+                  CONSTRAINT ux_replication_log_seq UNIQUE (seq),
+                  CONSTRAINT ck_replication_entity_version_positive CHECK (entity_version > 0),
+                  CONSTRAINT ck_replication_operation CHECK (operation IN ('create', 'update', 'delete'))
+              );
+              CREATE UNIQUE INDEX ux_replication_account_operation
+                  ON replication_log (account_id, operation_id);
+              CREATE UNIQUE INDEX ux_replication_account_idempotency
+                  ON replication_log (account_id, idempotency_key);
+              CREATE INDEX ix_replication_account_seq
+                  ON replication_log (account_id, seq);
+              CREATE INDEX ix_replication_account_record_version
+                  ON replication_log (account_id, record_id, entity_version);

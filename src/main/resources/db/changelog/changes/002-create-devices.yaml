@@ -1,0 +1,22 @@
+databaseChangeLog:
+  - changeSet:
+      id: 002-create-devices
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE devices (
+                  id uuid PRIMARY KEY DEFAULT uuidv7(),
+                  account_id uuid NOT NULL,
+                  device_id text NOT NULL,
+                  status text NOT NULL,
+                  protocol_version bigint NOT NULL,
+                  first_seen_at timestamptz NOT NULL,
+                  last_seen_at timestamptz NOT NULL,
+                  CONSTRAINT ck_devices_status CHECK (status IN ('active', 'revoked')),
+                  CONSTRAINT ck_devices_protocol_positive CHECK (protocol_version > 0)
+              );
+              CREATE UNIQUE INDEX ux_devices_account_device
+                  ON devices (account_id, device_id);
+              CREATE INDEX ix_devices_account_status
+                  ON devices (account_id, status);

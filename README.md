@@ -13,7 +13,8 @@ business code.
 
 Backend chịu trách nhiệm:
 
-- xác thực access token do Keycloak phát hành và ánh xạ `sub` sang account nội bộ;
+- xác thực identity JWT ngắn hạn do gateway ký sau khi gateway đã kiểm tra
+  Keycloak access token, rồi ánh xạ `sub` sang account nội bộ;
 - đăng ký, kiểm tra và thu hồi quyền đồng bộ của từng thiết bị;
 - nhận các encrypted envelope từ desktop và lưu ciphertext như dữ liệu opaque;
 - bảo đảm account isolation, device binding và giới hạn phiên bản protocol;
@@ -30,21 +31,24 @@ conflict. Khóa mã hóa và quyết định merge luôn thuộc về DevKit des
 
 ```text
 DevKit desktop
-    │  Bearer token + device ID + encrypted envelope
+    │  Keycloak access token + device ID + encrypted envelope
+    ▼
+Gateway: validate external token, strip identity headers, sign identity context
+    │  Gateway identity JWT + device ID + encrypted envelope
     ▼
 Inbound HTTP adapter
     │  validated command/query
     ▼
-Application use case ─────► Keycloak/JWT outbound adapter
-    │                       PostgreSQL outbound adapter
-    │                       audit/observability outbound adapter
+Application use case ─────► PostgreSQL outbound adapter
+    │                       audit outbound adapter
     ▼
 Domain rules: account isolation, idempotency, version arbitration, cursor
 ```
 
 JWT claim, request body và database row đều là input không đáng tin cho tới khi
-được kiểm tra tại boundary tương ứng. `account_id` dùng trong business operation
-phải được suy ra từ authenticated identity; không tin giá trị do client gửi trong
+được kiểm tra tại boundary tương ứng. Backend chỉ tin identity context có chữ ký
+của gateway; không tin identity header do client gửi. `account_id` dùng trong
+business operation phải được suy ra từ authenticated identity, không lấy từ
 request body.
 
 ## Kiến trúc Hexagonal
@@ -67,19 +71,19 @@ application/service ──► application/port/out ◄── adapter/out
 bootstrap ──► composition/wiring của toàn bộ các layer
 ```
 
-- `domain` chỉ chứa business model và invariant; không phụ thuộc Spring, JPA,
+- `domain` chỉ chứa business model và invariant; không phụ thuộc Spring, JDBC,
   HTTP, Keycloak, Redis hoặc PostgreSQL.
 - `application/port/in` định nghĩa use case mà inbound adapter được phép gọi.
 - `application/port/out` định nghĩa dependency mà application cần từ hạ tầng.
 - `application/service` điều phối use case, transaction boundary và domain rule;
-  không biết chi tiết HTTP/JPA.
+  không biết chi tiết HTTP/JDBC.
 - `adapter/in` chuyển protocol bên ngoài thành input của use case.
 - `adapter/out` triển khai outbound port cho persistence, security và hạ tầng.
 - `bootstrap` là composition root duy nhất được phép biết cả core và adapter.
 - Inbound adapter không gọi trực tiếp outbound adapter.
-- JPA entity và API DTO không được dùng làm domain model.
+- Database row và API DTO không được dùng làm domain model.
 
-## Cấu trúc project mục tiêu
+## Cấu trúc project
 
 ```text
 src/
@@ -100,7 +104,7 @@ src/
 │   │   │       ├── in/web/
 │   │   │       └── out/
 │   │   │           ├── persistence/
-│   │   │           └── keycloak/
+│   │   │           └── persistence/
 │   │   ├── replication/
 │   │   │   ├── domain/
 │   │   │   │   ├── model/
@@ -112,14 +116,15 @@ src/
 │   │   │   └── adapter/
 │   │   │       ├── in/web/
 │   │   │       └── out/
-│   │   │           ├── persistence/
-│   │   │           └── locking/
+│   │   │           └── persistence/
 │   │   ├── audit/
 │   │   │   ├── application/port/out/
 │   │   │   └── adapter/out/
 │   │   └── shared/
-│   │       ├── error/
-│   │       └── validation/
+│   │       ├── adapter/in/web/
+│   │       ├── application/port/out/
+│   │       ├── domain/
+│   │       └── error/
 │   └── resources/
 │       ├── application.yaml
 │       └── db/changelog/
@@ -136,7 +141,7 @@ Tên package có thể được bổ sung khi xuất hiện capability thật, n
 thuộc không thay đổi. `shared` phải luôn nhỏ; business rule thuộc capability nào
 thì nằm trong capability đó, không đưa vào `shared` chỉ để tái sử dụng sớm.
 
-### Trách nhiệm dự kiến theo capability
+### Trách nhiệm theo capability
 
 | Capability | Trách nhiệm |
 |---|---|
@@ -150,6 +155,10 @@ thì nằm trong capability đó, không đưa vào `shared` chỉ để tái s�
 PostgreSQL lưu account/device metadata, append-only replication log, entity head
 và audit event. Ciphertext trong envelope là opaque đối với backend.
 
+Persistence adapter dùng Spring JDBC với SQL tường minh. Cách này giữ advisory
+lock, JSONB, append sequence và account scope dễ review mà không cần JPA entity
+trung gian.
+
 Liquibase migration phải forward-only và được include theo thứ tự từ
 `db.changelog-master.yaml`. Business code không tự tạo hoặc sửa schema. Mọi
 constraint quan trọng cho idempotency và concurrency phải được bảo vệ ở cả
@@ -161,8 +170,8 @@ chưa được ghi thành công.
 
 ## Security invariants
 
-- Chỉ chấp nhận authenticated identity đã được Spring Security xác thực từ
-  Keycloak JWT.
+- Chỉ chấp nhận gateway identity JWT đã được Spring Security kiểm tra chữ ký,
+  issuer, audience và expiry. Gateway chịu trách nhiệm validate Keycloak token.
 - Mọi query phải scope theo account lấy từ identity context.
 - Device bị revoke hoặc protocol không tương thích phải bị từ chối trước khi
   đọc/ghi replication data.
@@ -178,7 +187,7 @@ chưa được ghi thành công.
   Spring context.
 - **Application test:** use case với fake outbound ports, kiểm tra orchestration
   và transaction semantics.
-- **Adapter test:** HTTP contract, JWT mapping, JPA mapping và Liquibase migration.
+- **Adapter test:** HTTP contract, JWT mapping, JDBC mapping và Liquibase migration.
 - **Integration test:** PostgreSQL/Keycloak-compatible auth bằng container hoặc
   fixture cô lập.
 - **Contract E2E:** chạy chính sync HTTP client của DevKit desktop với backend
@@ -188,12 +197,25 @@ chưa được ghi thành công.
 
 ## Trạng thái hiện tại
 
-Repository đang ở giai đoạn bootstrap Spring Boot. Keycloak và PostgreSQL đã có
-thể chạy bằng Docker, nhưng session/push/pull, persistence model, arbitration và
-contract E2E chưa được xem là implemented cho tới khi có code cùng test evidence
-tương ứng.
+Phase A backend đã implement ba endpoint `session`, `push`, `pull`; gateway JWT
+validation; account/device registration; Liquibase schema; atomic arbitration;
+account-scoped cursor; safe audit; request/response limits; PostgreSQL 18
+integration test và contract E2E bằng production Go HTTP transport.
 
-Hạng mục triển khai đầu tiên nên là một vertical slice nhỏ cho authenticated
-`GET /v1/sync/session`: JWT identity → account/device use case → PostgreSQL
-adapter → HTTP response. Slice này thiết lập đúng dependency direction trước khi
-mở rộng sang push/pull và arbitration.
+Gateway vẫn là dependency bên ngoài repository này. Production chỉ sẵn sàng khi
+gateway validate Keycloak access token, xóa identity header do client gửi và ký
+internal identity JWT theo đúng contract. Backend không có chế độ bỏ qua auth.
+
+## Chạy local
+
+1. Khởi động PostgreSQL/Keycloak hiện có: `docker compose up -d`.
+2. Export cấu hình backend và gateway từ environment; không commit `.env` thật.
+3. Chạy `./gradlew bootRun`.
+4. Kiểm tra `GET http://127.0.0.1:8080/actuator/health`.
+
+Chi tiết cấu hình và troubleshooting:
+
+- [Phase A specification](docs/specs/2026-08-09-sync-backend-phase-a.md)
+- [Implementation plan và execution status](docs/plans/2026-08-09-sync-backend-phase-a-implementation.md)
+- [Local development](docs/operations/local-development.md)
+- [Security configuration](docs/operations/security-configuration.md)

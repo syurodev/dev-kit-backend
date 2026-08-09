@@ -1,0 +1,10 @@
+devkit:
+  security:
+    issuer: https://gateway.test
+    jwk-set-uri: http://127.0.0.1:9/test-jwks
+    audience: devkit-sync-api
+    upstream-issuer: https://keycloak.test/realms/devkit
+
+logging:
+  level:
+    root: WARN
