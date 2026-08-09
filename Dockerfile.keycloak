@@ -58,6 +58,9 @@ COPY --from=security-patches /postgresql.jar \
 # product does not use identity brokering or the legacy Twitter broker.
 RUN /opt/keycloak/bin/kc.sh build \
     --db=postgres \
+    --health-enabled=true \
+    --metrics-enabled=true \
+    --tracing-enabled=true \
     --features-disabled=identity-brokering-api,twitter-broker
 
 RUN rm -rf /opt/keycloak/bin/client \

@@ -1,0 +1,56 @@
+name: Publish DevKit images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'gateway/**'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'build.gradle'
+      - 'settings.gradle'
+      - 'Dockerfile'
+      - 'Dockerfile.gateway'
+      - '.github/workflows/publish-images.yml'
+  workflow_dispatch:
+
+# GitHub's ephemeral GITHUB_TOKEN publishes the packages. Kubernetes gets a
+# separate read-only token from Infisical; no registry credential is committed.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: dev-kit-api
+            dockerfile: Dockerfile
+          - image: dev-kit-gateway
+            dockerfile: Dockerfile.gateway
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:sha-${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/${{ matrix.image }}:main
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}

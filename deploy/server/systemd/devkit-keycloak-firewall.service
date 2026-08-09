@@ -1,0 +1,13 @@
+[Unit]
+Description=Restrict Docker-published DevKit Keycloak ingress to K3s pods
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/restrict-devkit-keycloak-ingress
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

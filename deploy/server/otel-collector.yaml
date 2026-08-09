@@ -1,0 +1,57 @@
+# This collector is the narrow egress point from DevKit infrastructure to the
+# existing SigNoz ingester. It is intentionally separate from the SigNoz
+# deployment, so the DevKit stack cannot change the shared collector pipeline.
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+  prometheus:
+    config:
+      global:
+        scrape_interval: 30s
+        scrape_timeout: 10s
+      scrape_configs:
+        - job_name: devkit-keycloak
+          static_configs:
+            - targets: [keycloak:9000]
+        - job_name: devkit-keycloak-postgres
+          static_configs:
+            - targets: [keycloak-db-metrics:9187]
+        - job_name: devkit-postgres
+          static_configs:
+            - targets: [devkit-db-metrics:9187]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 128
+    spike_limit_mib: 32
+  resource/devkit:
+    attributes:
+      - key: deployment.environment
+        value: production
+        action: upsert
+      - key: service.namespace
+        value: devkit
+        action: upsert
+  batch:
+    timeout: 10s
+    send_batch_size: 8192
+
+exporters:
+  otlp_grpc/signoz:
+    endpoint: signoz-ingester:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, resource/devkit, batch]
+      exporters: [otlp_grpc/signoz]
+    metrics:
+      receivers: [otlp, prometheus]
+      processors: [memory_limiter, resource/devkit, batch]
+      exporters: [otlp_grpc/signoz]

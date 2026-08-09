@@ -1,0 +1,341 @@
+name: devkit-infra
+
+# This file provisions only server-side infrastructure. It deliberately does
+# not start the API or Gateway: those will be deployed separately to Kubernetes.
+x-postgres-image: &postgres-image
+  image: devkit-postgres:18-alpine-hardened
+  build:
+    context: ../..
+    dockerfile: Dockerfile.postgres
+
+services:
+  keycloak-db:
+    <<: *postgres-image
+    container_name: devkit-infra-keycloak-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+    volumes:
+      - keycloak-db-data:/var/lib/postgresql
+    networks:
+      - private
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+
+  devkit-db:
+    <<: *postgres-image
+    container_name: devkit-infra-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: devkit
+      POSTGRES_USER: devkit_owner
+      POSTGRES_PASSWORD: ${DEVKIT_DB_ADMIN_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD}
+    # Docker publishes this port so Kubernetes Pods can reach the database over
+    # the node address. The DOCKER-USER firewall unit allows only Pod CIDR
+    # traffic and drops all other traffic before it reaches PostgreSQL.
+    ports:
+      - "5433:5432"
+    volumes:
+      - devkit-db-data:/var/lib/postgresql
+    networks:
+      - private
+      - ingress
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+
+  devkit-db-role-init:
+    <<: *postgres-image
+    container_name: devkit-infra-db-role-init
+    restart: "no"
+    depends_on:
+      devkit-db:
+        condition: service_healthy
+    environment:
+      DEVKIT_DB_HOST: devkit-db
+      DEVKIT_DB_NAME: devkit
+      DEVKIT_DB_ADMIN_USER: devkit_owner
+      DEVKIT_DB_ADMIN_PASSWORD: ${DEVKIT_DB_ADMIN_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD}
+      DEVKIT_DB_APP_USER: devkit_app
+      DEVKIT_DB_APP_PASSWORD: ${DEVKIT_DB_APP_PASSWORD:?Set DEVKIT_DB_APP_PASSWORD}
+    entrypoint: ["/bin/sh", "/scripts/bootstrap-devkit-db-role.sh"]
+    volumes:
+      - ../../scripts/bootstrap-devkit-db-role.sh:/scripts/bootstrap-devkit-db-role.sh:ro
+    networks:
+      - private
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  keycloak:
+    build:
+      context: ../..
+      dockerfile: Dockerfile.keycloak
+    image: devkit-keycloak:26.7.1-hardened
+    container_name: devkit-infra-keycloak
+    restart: unless-stopped
+    command: ["start", "--optimized", "--import-realm"]
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+      KC_BOOTSTRAP_ADMIN_USERNAME: devkit_admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+      KC_HTTP_ENABLED: "true"
+      # The management interface remains private. The local collector scrapes
+      # its metrics and forwards them to SigNoz over the external Docker network.
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_TRACING_ENABLED: "true"
+      KC_TRACING_ENDPOINT: http://devkit-otel-collector:4317
+      KC_TRACING_PROTOCOL: grpc
+      KC_TELEMETRY_SERVICE_NAME: devkit-keycloak
+      KC_TELEMETRY_RESOURCE_ATTRIBUTES: deployment.environment=production,service.namespace=devkit
+      KC_PROXY_HEADERS: xforwarded
+      # Public issuer URL. Create this DNS record in Cloudflare before exposing
+      # the reverse proxy; it must match the URL used by browser clients.
+      KC_HOSTNAME: https://auth.synx.io.vn
+    # Traefik runs in K3s, outside this Docker network, so it reaches Keycloak
+    # through the node address. Before publishing the port, install the
+    # DOCKER-USER restriction in scripts/restrict-keycloak-ingress.sh. Do not
+    # rely on UFW: Docker published ports bypass its normal INPUT rules.
+    ports:
+      # Docker's default all-interface binding. The DOCKER-USER rules restrict
+      # it to K3s pods despite the public host address being reachable.
+      - "8181:8080"
+    volumes:
+      - ../../keycloak/realm-devkit.json:/opt/keycloak/data/import/realm-devkit.json:ro
+    networks:
+      - private
+      # A non-internal bridge is required for Docker to activate the published
+      # host port. No database or collector service joins this network.
+      - ingress
+    mem_limit: 1536m
+    cpus: 1.0
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      # Keycloak caches pre-compressed static resources here. Keep it ephemeral
+      # so the container can remain read-only.
+      - /opt/keycloak/data/tmp:size=64m,mode=0700,uid=1000,gid=0
+      - /opt/keycloak/data/transaction-logs:size=64m,mode=0700,uid=1000,gid=0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # PostgreSQL cannot emit OTLP itself. This exporter exposes only an internal
+  # Prometheus endpoint, which the DevKit collector pulls over the private
+  # network; it is never published to the host or SigNoz network.
+  keycloak-db-metrics:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.18.1
+    container_name: devkit-infra-keycloak-db-metrics
+    restart: unless-stopped
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_URI: keycloak-db:5432/keycloak?sslmode=disable
+      DATA_SOURCE_USER: keycloak
+      DATA_SOURCE_PASS: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+    # Disable the image's optional local config-file lookup. All required
+    # configuration is explicit above, so startup logs remain signal-rich.
+    command: ["--config.file="]
+    networks:
+      - private
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    mem_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  devkit-db-metrics:
+    image: quay.io/prometheuscommunity/postgres-exporter:v0.18.1
+    container_name: devkit-infra-db-metrics
+    restart: unless-stopped
+    depends_on:
+      devkit-db:
+        condition: service_healthy
+    environment:
+      DATA_SOURCE_URI: devkit-db:5432/devkit?sslmode=disable
+      DATA_SOURCE_USER: devkit_owner
+      DATA_SOURCE_PASS: ${DEVKIT_DB_ADMIN_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD}
+    command: ["--config.file="]
+    networks:
+      - private
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    mem_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # This is the only DevKit service attached to SigNoz's external network.
+  # It accepts Keycloak OTLP locally and pulls internal Prometheus endpoints;
+  # neither database receives a route to the SigNoz stack.
+  devkit-otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    container_name: devkit-infra-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    depends_on:
+      keycloak:
+        condition: service_started
+      keycloak-db-metrics:
+        condition: service_started
+      devkit-db-metrics:
+        condition: service_started
+    volumes:
+      - ./otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      - private
+      - signoz
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    mem_limit: 192m
+    cpus: 0.5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  redis:
+    profiles: ["bundled-redis"]
+    build:
+      context: ../..
+      dockerfile: Dockerfile.redis
+    image: devkit-redis:8.8.1-hardened
+    container_name: devkit-infra-redis
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${DEVKIT_REDIS_PASSWORD:?Set DEVKIT_REDIS_PASSWORD when enabling bundled Redis}
+    # Redis is cache-only at this stage: do not persist it or publish its port.
+    command:
+      - redis-server
+      - --appendonly
+      - "no"
+      - --save
+      - ""
+      - --maxmemory
+      - 192mb
+      - --maxmemory-policy
+      - allkeys-lru
+      - --requirepass
+      - ${DEVKIT_REDIS_PASSWORD:?Set DEVKIT_REDIS_PASSWORD when enabling bundled Redis}
+    networks:
+      - private
+    mem_limit: 256m
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -qx PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  # Redis starts only with the bundled-redis profile. Its exporter and collector
+  # use the same profile, avoiding false scrape failures when Redis is omitted.
+  redis-metrics:
+    profiles: ["bundled-redis"]
+    image: oliver006/redis_exporter:v1.80.0
+    container_name: devkit-infra-redis-metrics
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_ADDR: redis://redis:6379
+      REDIS_PASSWORD: ${DEVKIT_REDIS_PASSWORD:?Set DEVKIT_REDIS_PASSWORD when enabling bundled Redis}
+    networks:
+      - private
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    mem_limit: 64m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  devkit-redis-otel-collector:
+    profiles: ["bundled-redis"]
+    image: otel/opentelemetry-collector-contrib:0.153.0
+    container_name: devkit-infra-redis-otel-collector
+    restart: unless-stopped
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    depends_on:
+      redis-metrics:
+        condition: service_started
+    volumes:
+      - ./otel-collector-redis.yaml:/etc/otelcol-contrib/config.yaml:ro
+    networks:
+      - private
+      - signoz
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    mem_limit: 128m
+    cpus: 0.25
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+volumes:
+  keycloak-db-data:
+  devkit-db-data:
+
+networks:
+  private:
+    internal: true
+  # Dedicated bridge for Keycloak's host-published HTTP port. The host firewall
+  # restricts ingress to K3s pods; do not attach PostgreSQL or Redis here.
+  ingress: {}
+  # Created by the existing SigNoz Compose deployment. Compose fails fast when
+  # it is absent, preventing an infrastructure stack that only looks monitored.
+  signoz:
+    external: true
+    name: signoz-network

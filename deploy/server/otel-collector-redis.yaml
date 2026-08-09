@@ -1,0 +1,43 @@
+# Redis is optional, so its scrape pipeline is kept separate from the mandatory
+# Keycloak/PostgreSQL collector. This prevents noisy failed scrapes when Redis
+# is intentionally not deployed.
+receivers:
+  prometheus:
+    config:
+      global:
+        scrape_interval: 30s
+        scrape_timeout: 10s
+      scrape_configs:
+        - job_name: devkit-redis
+          static_configs:
+            - targets: [redis-metrics:9121]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 96
+    spike_limit_mib: 24
+  resource/devkit:
+    attributes:
+      - key: deployment.environment
+        value: production
+        action: upsert
+      - key: service.namespace
+        value: devkit
+        action: upsert
+  batch:
+    timeout: 10s
+    send_batch_size: 4096
+
+exporters:
+  otlp_grpc/signoz:
+    endpoint: signoz-ingester:4317
+    tls:
+      insecure: true
+
+service:
+  pipelines:
+    metrics:
+      receivers: [prometheus]
+      processors: [memory_limiter, resource/devkit, batch]
+      exporters: [otlp_grpc/signoz]

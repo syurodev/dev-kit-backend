@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1.7
+
+# Redis is optional infrastructure for future distributed rate limits and cache
+# use. Keep its Alpine packages current even though it is not a correctness
+# dependency of the Phase A sync API.
+FROM redis:8.8.1-alpine3.23
+
+USER root
+RUN apk upgrade --no-cache
+USER redis
