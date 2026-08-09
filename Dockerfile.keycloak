@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1.7
+
+# Keep security patches in a content-addressed build stage. A changed artifact
+# fails the build instead of silently entering the local identity provider.
+FROM scratch AS security-patches
+
+ADD --checksum=sha256:4b40a06396f239f8de2da57419adde6e94e5edc18a2171d471ea05eeed4e5c2d \
+    https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-core/2.21.4/jackson-core-2.21.4.jar \
+    /jackson-core.jar
+ADD --checksum=sha256:3888e9e69ab66fbacaacc9aea0e9ffbf15368288e4aca468b024dba11c09fbf9 \
+    https://repo.maven.apache.org/maven2/com/fasterxml/jackson/core/jackson-databind/2.21.4/jackson-databind-2.21.4.jar \
+    /jackson-databind.jar
+ADD --checksum=sha256:1957ef2deaffbc1fb98cebfd0f5b3109ecf19c994d7e5378598c20747ba8d68b \
+    https://repo.maven.apache.org/maven2/io/micrometer/micrometer-core/1.16.6/micrometer-core-1.16.6.jar \
+    /micrometer-core.jar
+ADD --checksum=sha256:2de4fc13005c7740b46427a47ee04265a19779c147d53e583f441889b1148159 \
+    https://repo.maven.apache.org/maven2/io/netty/netty-codec/4.1.136.Final/netty-codec-4.1.136.Final.jar \
+    /netty-codec.jar
+ADD --checksum=sha256:841be7fc6f1c929ecc63c70a909e0df085b4e80e44680acf46708f0e93e68037 \
+    https://repo.maven.apache.org/maven2/io/netty/netty-codec-haproxy/4.1.136.Final/netty-codec-haproxy-4.1.136.Final.jar \
+    /netty-codec-haproxy.jar
+ADD --checksum=sha256:ffd1e1b19a533bc6e47ef2cbc1290374ff4a7cb53a280defa3df392538214948 \
+    https://repo.maven.apache.org/maven2/io/netty/netty-codec-http/4.1.136.Final/netty-codec-http-4.1.136.Final.jar \
+    /netty-codec-http.jar
+ADD --checksum=sha256:14f67ae095c056b062aa0ee2c7b01f6b78004cf3620a6e9061bcb637f079387a \
+    https://repo.maven.apache.org/maven2/io/netty/netty-codec-http2/4.1.136.Final/netty-codec-http2-4.1.136.Final.jar \
+    /netty-codec-http2.jar
+ADD --checksum=sha256:31fbf6f06b2217fb51d5100cee51b22625cc81640da0679b47914e54c1e6377c \
+    https://jdbc.postgresql.org/download/postgresql-42.7.12.jar \
+    /postgresql.jar
+
+FROM quay.io/keycloak/keycloak:26.7.1
+
+USER 0
+
+# Preserve the generated Keycloak classpath filenames while replacing their
+# contents with binary-compatible patch releases. This stack uses PostgreSQL;
+# the unused SQL Server driver and standalone admin CLI are removed.
+COPY --from=security-patches /jackson-core.jar \
+    /opt/keycloak/lib/lib/main/com.fasterxml.jackson.core.jackson-core-2.21.2.jar
+COPY --from=security-patches /jackson-databind.jar \
+    /opt/keycloak/lib/lib/main/com.fasterxml.jackson.core.jackson-databind-2.21.2.jar
+COPY --from=security-patches /micrometer-core.jar \
+    /opt/keycloak/lib/lib/main/io.micrometer.micrometer-core-1.16.3.jar
+COPY --from=security-patches /netty-codec.jar \
+    /opt/keycloak/lib/lib/main/io.netty.netty-codec-4.1.135.Final.jar
+COPY --from=security-patches /netty-codec-haproxy.jar \
+    /opt/keycloak/lib/lib/main/io.netty.netty-codec-haproxy-4.1.135.Final.jar
+COPY --from=security-patches /netty-codec-http.jar \
+    /opt/keycloak/lib/lib/main/io.netty.netty-codec-http-4.1.135.Final.jar
+COPY --from=security-patches /netty-codec-http2.jar \
+    /opt/keycloak/lib/lib/main/io.netty.netty-codec-http2-4.1.135.Final.jar
+COPY --from=security-patches /postgresql.jar \
+    /opt/keycloak/lib/lib/main/org.postgresql.postgresql-42.7.11.jar
+
+# Quarkus records an indexed runtime classpath in the distribution. Rebuild it
+# after replacing JAR contents so the index matches the patched artifacts. The
+# product does not use identity brokering or the legacy Twitter broker.
+RUN /opt/keycloak/bin/kc.sh build \
+    --db=postgres \
+    --features-disabled=identity-brokering-api,twitter-broker
+
+RUN rm -rf /opt/keycloak/bin/client \
+    && rm -f /opt/keycloak/bin/kcadm.sh \
+             /opt/keycloak/bin/kcreg.sh \
+             /opt/keycloak/lib/lib/main/com.microsoft.sqlserver.mssql-jdbc-13.2.1.jre11.jar
+
+USER 1000

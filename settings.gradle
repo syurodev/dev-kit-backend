@@ -1,1 +1,6 @@
 rootProject.name = 'dev-kit'
+
+// The public gateway is deployed as a separate process. Keeping it as a
+// subproject lets both applications share one wrapper without coupling their
+// runtime or package boundaries.
+include 'gateway'

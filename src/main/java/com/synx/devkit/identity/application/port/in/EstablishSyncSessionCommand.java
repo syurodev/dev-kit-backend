@@ -8,6 +8,7 @@ public record EstablishSyncSessionCommand(
         String username,
         String deviceId,
         long protocolVersion,
+        String enrollmentToken,
         Instant upstreamExpiresAt,
         String requestId) {
 }

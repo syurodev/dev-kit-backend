@@ -4,10 +4,10 @@ Backend này cung cấp dịch vụ đồng bộ nhiều thiết bị cho ứng 
 DevKit desktop vẫn là ứng dụng local-first; backend chỉ là đích đồng bộ tùy chọn
 và không tham gia vào các workflow local khi người dùng chưa bật sync.
 
-Repository hiện là một ứng dụng Java/Spring Boot. Keycloak và PostgreSQL được
-chạy bằng Docker như các dependency bên ngoài; application kết nối tới các dịch
-vụ đó qua cấu hình runtime, không khởi tạo hay quản lý vòng đời của chúng trong
-business code.
+Repository hiện có hai Spring Boot process: sync API theo Hexagonal Architecture
+ở root project và Spring Cloud Gateway Server Web MVC ở `gateway/`. Keycloak,
+hai PostgreSQL database, API và Gateway có thể chạy cùng Docker Compose nhưng
+vẫn dùng process, credential, volume và network boundary riêng.
 
 ## Vai trò của backend
 
@@ -15,7 +15,8 @@ Backend chịu trách nhiệm:
 
 - xác thực identity JWT ngắn hạn do gateway ký sau khi gateway đã kiểm tra
   Keycloak access token, rồi ánh xạ `sub` sang account nội bộ;
-- đăng ký, kiểm tra và thu hồi quyền đồng bộ của từng thiết bị;
+- đăng ký thiết bị đầu tiên và enrollment thiết bị tiếp theo bằng token một lần;
+- kiểm tra và thu hồi quyền đồng bộ của từng thiết bị;
 - nhận các encrypted envelope từ desktop và lưu ciphertext như dữ liệu opaque;
 - bảo đảm account isolation, device binding và giới hạn phiên bản protocol;
 - xử lý idempotency và phân xử version theo từng `(account, record)`;
@@ -101,10 +102,10 @@ src/
 │   │   │   │   ├── port/out/
 │   │   │   │   └── service/
 │   │   │   └── adapter/
-│   │   │       ├── in/web/
-│   │   │       └── out/
-│   │   │           ├── persistence/
-│   │   │           └── persistence/
+│   │   │       ├── in/
+│   │   │       │   ├── security/
+│   │   │       │   └── web/
+│   │   │       └── out/persistence/
 │   │   ├── replication/
 │   │   │   ├── domain/
 │   │   │   │   ├── model/
@@ -135,6 +136,15 @@ src/
         ├── architecture/
         ├── identity/
         └── replication/
+```
+
+Gateway là một deployment adapter độc lập, không phải domain layer của sync API:
+
+```text
+gateway/src/main/java/com/synx/devkit/gateway/
+├── configuration/   # typed Keycloak và internal-token settings
+├── security/        # external JWT validation, header sanitizing, token signing
+└── web/             # public JWKS endpoint
 ```
 
 Tên package có thể được bổ sung khi xuất hiện capability thật, nhưng chiều phụ
@@ -178,6 +188,10 @@ chưa được ghi thành công.
 - Không log access token, credential, plaintext, encryption key hoặc ciphertext.
 - Không deserialize ciphertext thành business object phía server.
 - Request size, batch size, ciphertext size và cursor length phải có giới hạn.
+- Device mới sau bootstrap phải có enrollment token do device active tạo; token
+  được hash, ràng buộc target device, hết hạn và chỉ dùng một lần.
+- Gateway phải giới hạn request theo IP/subject và concurrency; PostgreSQL phải
+  áp quota lưu trữ atomically trước khi append operation mới.
 - Replay phải idempotent; entity version không được rollback.
 - Error trả ra API không chứa stack trace hoặc chi tiết hạ tầng nhạy cảm.
 
@@ -197,21 +211,33 @@ chưa được ghi thành công.
 
 ## Trạng thái hiện tại
 
-Phase A backend đã implement ba endpoint `session`, `push`, `pull`; gateway JWT
+Phase A backend đã implement `session`, device enrollment, `push`, `pull`; gateway JWT
 validation; account/device registration; Liquibase schema; atomic arbitration;
 account-scoped cursor; safe audit; request/response limits; PostgreSQL 18
 integration test và contract E2E bằng production Go HTTP transport.
 
-Gateway vẫn là dependency bên ngoài repository này. Production chỉ sẵn sàng khi
-gateway validate Keycloak access token, xóa identity header do client gửi và ký
-internal identity JWT theo đúng contract. Backend không có chế độ bỏ qua auth.
+Gateway MVC hiện đã có trong `gateway/`: validate chữ ký/issuer/audience/expiry
+của Keycloak access token, bắt buộc stable `sub`, loại identity/proxy header do
+client gửi, ký JWT nội bộ RS256 tối đa 45 giây và publish public JWKS cho backend.
+Compose giữ API trên private network; các development port chỉ bind loopback. Realm import
+`devkit` cấu hình desktop public client dùng Authorization Code + PKCE S256 và
+thêm audience `devkit-sync-gateway`. Backend không có chế độ bỏ qua auth.
+Image Keycloak local overlay các dependency runtime đã vá bằng checksum cố định;
+Admin CLI và SQL Server driver không dùng được loại khỏi image.
+Image PostgreSQL local áp Alpine security updates và rebuild `gosu` bằng Go
+toolchain đã vá thay vì dùng binary cũ từ base image.
 
 ## Chạy local
 
-1. Khởi động PostgreSQL/Keycloak hiện có: `docker compose up -d`.
-2. Export cấu hình backend và gateway từ environment; không commit `.env` thật.
-3. Chạy `./gradlew bootRun`.
-4. Kiểm tra `GET http://127.0.0.1:8080/actuator/health`.
+1. Tạo `.env` từ `.env.example` và chạy
+   `./scripts/generate-gateway-keypair.sh` một lần cho local development.
+2. Khởi động stack: `docker compose up -d --build`.
+   Nếu realm đã tồn tại, chạy `./scripts/apply-keycloak-security.sh` để áp policy
+   mới mà không xóa volume.
+3. Kiểm tra Gateway: `GET http://127.0.0.1:8082/actuator/health` và Keycloak
+   discovery tại `http://127.0.0.1:8081/realms/devkit/.well-known/openid-configuration`.
+4. Khi chạy process ngoài Docker, dùng `./gradlew bootRun` cho API và
+   `./gradlew :gateway:bootRun` cho Gateway với environment tương ứng.
 
 Chi tiết cấu hình và troubleshooting:
 

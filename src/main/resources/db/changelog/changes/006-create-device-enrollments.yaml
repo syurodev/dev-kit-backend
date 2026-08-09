@@ -1,0 +1,22 @@
+databaseChangeLog:
+  - changeSet:
+      id: 006-create-device-enrollments
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE device_enrollments (
+                  id uuid PRIMARY KEY DEFAULT uuidv7(),
+                  account_id uuid NOT NULL,
+                  created_by_device_id text NOT NULL,
+                  target_device_id text NOT NULL,
+                  token_digest bytea NOT NULL,
+                  expires_at timestamptz NOT NULL,
+                  created_at timestamptz NOT NULL
+              );
+              CREATE UNIQUE INDEX ux_device_enrollments_token
+                  ON device_enrollments (token_digest);
+              CREATE UNIQUE INDEX ux_device_enrollments_target
+                  ON device_enrollments (account_id, target_device_id);
+              CREATE INDEX ix_device_enrollments_expiry
+                  ON device_enrollments (expires_at);

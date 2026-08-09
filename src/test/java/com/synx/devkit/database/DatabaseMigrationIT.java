@@ -20,10 +20,12 @@ class DatabaseMigrationIT extends PostgresTestSupport {
         Integer count = jdbc.sql("""
                         SELECT count(*) FROM information_schema.tables
                         WHERE table_schema = 'public'
-                          AND table_name IN ('accounts', 'devices', 'replication_log', 'entity_heads', 'audit_events')
+                          AND table_name IN (
+                              'accounts', 'devices', 'device_enrollments', 'replication_log',
+                              'entity_heads', 'audit_events', 'account_storage_usage')
                         """)
                 .query(Integer.class)
                 .single();
-        assertEquals(5, count);
+        assertEquals(7, count);
     }
 }

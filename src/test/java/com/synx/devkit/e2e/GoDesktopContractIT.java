@@ -57,8 +57,10 @@ class GoDesktopContractIT extends PostgresTestSupport {
     @BeforeEach
     void clearBusinessData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
         jdbc.sql("DELETE FROM entity_heads").update();
         jdbc.sql("DELETE FROM replication_log").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }
@@ -68,6 +70,7 @@ class GoDesktopContractIT extends PostgresTestSupport {
         Path desktopRepository = desktopRepository();
         Assumptions.assumeTrue(Files.isRegularFile(desktopRepository.resolve("go.mod")),
                 "desktop repository is unavailable; set DEVKIT_DESKTOP_REPO to run this gate");
+        seedContractDevices();
 
         ProcessBuilder builder = new ProcessBuilder(
                 "go", "test", "./internal/sync",
@@ -85,6 +88,32 @@ class GoDesktopContractIT extends PostgresTestSupport {
         }
         String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
         assertEquals(0, process.exitValue(), output);
+    }
+
+    private void seedContractDevices() {
+        // Enrollment has its own API integration coverage. This cross-repo gate
+        // pre-registers both fixtures so it can remain focused on the existing
+        // Go replication transport until the desktop enrollment UI is added.
+        var accountId = jdbc.sql("""
+                        INSERT INTO accounts(identity_subject, created_at, updated_at)
+                        VALUES ('go-contract-subject', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                        RETURNING id
+                        """)
+                .query(java.util.UUID.class)
+                .single();
+        for (String deviceId : List.of("contract-device-a", "contract-device-b")) {
+            jdbc.sql("""
+                            INSERT INTO devices(
+                                account_id, device_id, status, protocol_version,
+                                first_seen_at, last_seen_at)
+                            VALUES (
+                                :accountId, :deviceId, 'active', 1,
+                                CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                            """)
+                    .param("accountId", accountId)
+                    .param("deviceId", deviceId)
+                    .update();
+        }
     }
 
     private static Path desktopRepository() {

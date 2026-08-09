@@ -22,15 +22,32 @@ public class JdbcDeviceRepository implements DeviceRepository {
     }
 
     @Override
-    public Device getOrCreate(UUID accountId, String deviceId, long protocolVersion, Instant now) {
+    public void lockRegistration(UUID accountId) {
+        // The transaction-scoped lock prevents two first-session requests from
+        // both registering a different bootstrap device for the same account.
+        jdbc.sql("""
+                        SELECT 1
+                        FROM pg_advisory_xact_lock(hashtextextended(CAST(:accountId AS text), 44127))
+                        """)
+                .param("accountId", accountId)
+                .query(Integer.class)
+                .single();
+    }
+
+    @Override
+    public boolean hasAny(UUID accountId) {
+        return jdbc.sql("SELECT EXISTS(SELECT 1 FROM devices WHERE account_id = :accountId)")
+                .param("accountId", accountId)
+                .query(Boolean.class)
+                .single();
+    }
+
+    @Override
+    public Device register(UUID accountId, String deviceId, long protocolVersion, Instant now) {
         OffsetDateTime timestamp = now.atOffset(ZoneOffset.UTC);
-        Optional<Device> active = jdbc.sql("""
+        return jdbc.sql("""
                         INSERT INTO devices(account_id, device_id, status, protocol_version, first_seen_at, last_seen_at)
                         VALUES (:accountId, :deviceId, 'active', :protocol, :now, :now)
-                        ON CONFLICT (account_id, device_id) DO UPDATE SET
-                            protocol_version = EXCLUDED.protocol_version,
-                            last_seen_at = EXCLUDED.last_seen_at
-                        WHERE devices.status = 'active'
                         RETURNING id, account_id, device_id, status, protocol_version, first_seen_at, last_seen_at
                         """)
                 .param("accountId", accountId)
@@ -38,8 +55,23 @@ public class JdbcDeviceRepository implements DeviceRepository {
                 .param("protocol", protocolVersion)
                 .param("now", timestamp)
                 .query(this::map)
+                .single();
+    }
+
+    @Override
+    public Optional<Device> touchActive(UUID accountId, String deviceId, long protocolVersion, Instant now) {
+        return jdbc.sql("""
+                        UPDATE devices
+                        SET protocol_version = :protocol, last_seen_at = :now
+                        WHERE account_id = :accountId AND device_id = :deviceId AND status = 'active'
+                        RETURNING id, account_id, device_id, status, protocol_version, first_seen_at, last_seen_at
+                        """)
+                .param("accountId", accountId)
+                .param("deviceId", deviceId)
+                .param("protocol", protocolVersion)
+                .param("now", now.atOffset(ZoneOffset.UTC))
+                .query(this::map)
                 .optional();
-        return active.orElseGet(() -> find(accountId, deviceId).orElseThrow());
     }
 
     @Override

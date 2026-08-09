@@ -9,6 +9,7 @@ import com.synx.devkit.replication.application.port.in.PushReplicationUseCase;
 import com.synx.devkit.replication.application.port.out.EntityHeadRepository;
 import com.synx.devkit.replication.application.port.out.ReplicationLock;
 import com.synx.devkit.replication.application.port.out.ReplicationLogRepository;
+import com.synx.devkit.replication.application.port.out.ReplicationQuota;
 import com.synx.devkit.replication.domain.model.ArbitrationDecision;
 import com.synx.devkit.replication.domain.model.EntityHead;
 import com.synx.devkit.replication.domain.service.ArbitrationPolicy;
@@ -27,6 +28,7 @@ public final class PushReplicationService implements PushReplicationUseCase {
     private final ArbitrationPolicy arbitration;
     private final ReplicationLock locks;
     private final ReplicationLogRepository log;
+    private final ReplicationQuota quota;
     private final EntityHeadRepository heads;
     private final AuditEventSink audit;
     private final TransactionRunner transactions;
@@ -38,6 +40,7 @@ public final class PushReplicationService implements PushReplicationUseCase {
             ArbitrationPolicy arbitration,
             ReplicationLock locks,
             ReplicationLogRepository log,
+            ReplicationQuota quota,
             EntityHeadRepository heads,
             AuditEventSink audit,
             TransactionRunner transactions,
@@ -47,6 +50,7 @@ public final class PushReplicationService implements PushReplicationUseCase {
         this.arbitration = arbitration;
         this.locks = locks;
         this.log = log;
+        this.quota = quota;
         this.heads = heads;
         this.audit = audit;
         this.transactions = transactions;
@@ -92,6 +96,9 @@ public final class PushReplicationService implements PushReplicationUseCase {
                 continue;
             }
 
+            // Replays and conflicts do not consume additional storage. A new
+            // accepted operation reserves quota in this same transaction.
+            quota.reserve(command.context().accountId(), operation);
             long sequence = log.append(command.context().accountId(), operation, digest, clock.instant());
             heads.save(new EntityHead(
                     command.context().accountId(),

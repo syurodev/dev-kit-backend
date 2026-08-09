@@ -25,8 +25,10 @@ class DatabaseConstraintsIT extends PostgresTestSupport {
     @BeforeEach
     void clearData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
         jdbc.sql("DELETE FROM entity_heads").update();
         jdbc.sql("DELETE FROM replication_log").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }

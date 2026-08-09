@@ -6,6 +6,8 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import com.synx.devkit.identity.application.port.in.AuthorizeSyncRequestCommand;
 import com.synx.devkit.identity.application.port.in.AuthorizeSyncRequestUseCase;
 import com.synx.devkit.identity.application.port.in.AuthorizedSyncContext;
+import com.synx.devkit.identity.application.port.in.CreateDeviceEnrollmentCommand;
+import com.synx.devkit.identity.application.port.in.CreateDeviceEnrollmentUseCase;
 import com.synx.devkit.identity.application.port.in.EstablishSyncSessionCommand;
 import com.synx.devkit.identity.application.port.in.EstablishSyncSessionUseCase;
 import com.synx.devkit.replication.application.port.in.PushReplicationCommand;
@@ -15,6 +17,7 @@ import com.synx.devkit.replication.domain.model.OperationType;
 import com.synx.devkit.replication.domain.model.ReplicationEnvelope;
 import com.synx.devkit.replication.domain.model.ReplicationOperation;
 import com.synx.devkit.shared.error.ValidationException;
+import com.synx.devkit.shared.error.QuotaExceededException;
 import com.synx.devkit.support.PostgresTestSupport;
 import java.time.Instant;
 import java.util.List;
@@ -35,6 +38,8 @@ class PushPersistenceIT extends PostgresTestSupport {
     @Autowired
     AuthorizeSyncRequestUseCase authorization;
     @Autowired
+    CreateDeviceEnrollmentUseCase enrollments;
+    @Autowired
     PushReplicationUseCase push;
     @Autowired
     JdbcClient jdbc;
@@ -42,8 +47,10 @@ class PushPersistenceIT extends PostgresTestSupport {
     @BeforeEach
     void clearBusinessData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
         jdbc.sql("DELETE FROM entity_heads").update();
         jdbc.sql("DELETE FROM replication_log").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }
@@ -72,9 +79,27 @@ class PushPersistenceIT extends PostgresTestSupport {
     }
 
     @Test
+    void exhaustedAccountQuotaRejectsAndRollsBackAppend() {
+        AuthorizedSyncContext context = context("device-a");
+        jdbc.sql("""
+                        INSERT INTO account_storage_usage(
+                            account_id, operations_used, bytes_used, updated_at)
+                        VALUES (:accountId, 1000000, 0, CURRENT_TIMESTAMP)
+                        """)
+                .param("accountId", context.accountId())
+                .update();
+
+        var operation = operation(context, "record-1", "idem-1", "op-1", 1);
+        assertThrows(QuotaExceededException.class,
+                () -> push.push(command(context, List.of(operation))));
+        assertEquals(0, count("replication_log"));
+        assertEquals(0, count("entity_heads"));
+    }
+
+    @Test
     void concurrentSameVersionProducesOneAcceptAndOneConflict() throws Exception {
         AuthorizedSyncContext firstContext = context("device-a");
-        AuthorizedSyncContext secondContext = context("device-b");
+        AuthorizedSyncContext secondContext = enrolledContext(firstContext, "device-b");
         var first = command(firstContext, List.of(operation(
                 firstContext, "record-1", "idem-a", "op-a", 1)));
         var second = command(secondContext, List.of(operation(
@@ -104,7 +129,17 @@ class PushPersistenceIT extends PostgresTestSupport {
 
     private AuthorizedSyncContext context(String deviceId) {
         sessions.establish(new EstablishSyncSessionCommand(
-                "subject-1", null, null, deviceId, 1, Instant.now().plusSeconds(3600), "session-test"));
+                "subject-1", null, null, deviceId, 1, null,
+                Instant.now().plusSeconds(3600), "session-test"));
+        return authorization.authorize(new AuthorizeSyncRequestCommand("subject-1", deviceId, 1));
+    }
+
+    private AuthorizedSyncContext enrolledContext(AuthorizedSyncContext authorizing, String deviceId) {
+        var token = enrollments.create(new CreateDeviceEnrollmentCommand(
+                authorizing, deviceId, "enrollment-test"));
+        sessions.establish(new EstablishSyncSessionCommand(
+                "subject-1", null, null, deviceId, 1, token.token(),
+                Instant.now().plusSeconds(3600), "session-test"));
         return authorization.authorize(new AuthorizeSyncRequestCommand("subject-1", deviceId, 1));
     }
 

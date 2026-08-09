@@ -1,6 +1,12 @@
+x-postgres-image: &postgres-image
+  image: devkit-postgres:18-alpine-hardened
+  build:
+    context: .
+    dockerfile: Dockerfile.postgres
+
 services:
   keycloak-db:
-    image: postgres:18-alpine
+    <<: *postgres-image
     container_name: devkit-keycloak-db
     restart: unless-stopped
     environment:
@@ -16,17 +22,27 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
 
   devkit-db:
-    image: postgres:18-alpine
+    <<: *postgres-image
     container_name: devkit-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: ${DEVKIT_DB_NAME:-devkit}
-      POSTGRES_USER: ${DEVKIT_DB_USER:-devkit}
-      POSTGRES_PASSWORD: ${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_PASSWORD in .env}
+      POSTGRES_USER: ${DEVKIT_DB_ADMIN_USER:-${DEVKIT_DB_USER:-devkit_owner}}
+      POSTGRES_PASSWORD: ${DEVKIT_DB_ADMIN_PASSWORD:-${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD in .env}}
     ports:
-      - "${DEVKIT_DB_PORT:-5433}:5432"
+      - "127.0.0.1:${DEVKIT_DB_PORT:-5433}:5432"
     volumes:
       - devkit-db-data:/var/lib/postgresql
     networks:
@@ -36,12 +52,48 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+
+  devkit-db-role-init:
+    <<: *postgres-image
+    restart: "no"
+    depends_on:
+      devkit-db:
+        condition: service_healthy
+    environment:
+      DEVKIT_DB_HOST: devkit-db
+      DEVKIT_DB_NAME: ${DEVKIT_DB_NAME:-devkit}
+      DEVKIT_DB_ADMIN_USER: ${DEVKIT_DB_ADMIN_USER:-${DEVKIT_DB_USER:-devkit_owner}}
+      DEVKIT_DB_ADMIN_PASSWORD: ${DEVKIT_DB_ADMIN_PASSWORD:-${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD in .env}}
+      DEVKIT_DB_APP_USER: ${DEVKIT_DB_APP_USER:-devkit_app}
+      DEVKIT_DB_APP_PASSWORD: ${DEVKIT_DB_APP_PASSWORD:-${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_APP_PASSWORD in .env}}
+    entrypoint: ["/bin/sh", "/scripts/bootstrap-devkit-db-role.sh"]
+    volumes:
+      - ./scripts/bootstrap-devkit-db-role.sh:/scripts/bootstrap-devkit-db-role.sh:ro
+    networks:
+      - devkit-network
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
   keycloak:
-    image: quay.io/keycloak/keycloak:26.7.0
+    build:
+      context: .
+      dockerfile: Dockerfile.keycloak
+    image: devkit-keycloak:26.7.1-hardened
     container_name: devkit-keycloak
     restart: unless-stopped
-    command: ["start"]
+    command: ["start", "--optimized", "--import-realm"]
     depends_on:
       keycloak-db:
         condition: service_healthy
@@ -56,18 +108,157 @@ services:
       KC_PROXY_HEADERS: ${KC_PROXY_HEADERS:-xforwarded}
       KC_HOSTNAME: ${KC_HOSTNAME:?Set KC_HOSTNAME in .env}
     ports:
-      - "${KEYCLOAK_PORT:-8081}:8080"
+      - "127.0.0.1:${KEYCLOAK_PORT:-8081}:8080"
+    volumes:
+      - ./keycloak/realm-devkit.json:/opt/keycloak/data/import/realm-devkit.json:ro
     networks:
       - keycloak-network
     mem_limit: ${KEYCLOAK_MEMORY_LIMIT:-1536m}
     cpus: ${KEYCLOAK_CPUS:-1.0}
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+      - /opt/keycloak/data/transaction-logs:size=64m,mode=0700,uid=1000,gid=0
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  gateway-key-init:
+    image: alpine:3.23
+    restart: "no"
+    entrypoint: ["/bin/sh", "/scripts/stage-gateway-keypair.sh"]
+    volumes:
+      - ${DEVKIT_GATEWAY_SIGNING_KEY_DIR:-./.local/gateway-keys}:/source:ro
+      - gateway-key-data:/target
+      - ./scripts/stage-gateway-keypair.sh:/scripts/stage-gateway-keypair.sh:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - FOWNER
+
+  devkit-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: "no"
+    depends_on:
+      devkit-db-role-init:
+        condition: service_completed_successfully
+    environment:
+      SPRING_MAIN_WEB_APPLICATION_TYPE: none
+      DEVKIT_RETENTION_ENABLED: "false"
+      DEVKIT_DB_URL: jdbc:postgresql://devkit-db:5432/${DEVKIT_DB_NAME:-devkit}
+      DEVKIT_DB_USER: ${DEVKIT_DB_ADMIN_USER:-${DEVKIT_DB_USER:-devkit_owner}}
+      DEVKIT_DB_PASSWORD: ${DEVKIT_DB_ADMIN_PASSWORD:-${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_ADMIN_PASSWORD in .env}}
+      DEVKIT_GATEWAY_ISSUER: http://migration.invalid
+      DEVKIT_GATEWAY_JWK_SET_URI: http://migration.invalid/jwks
+      DEVKIT_GATEWAY_AUDIENCE: devkit-sync-api
+      DEVKIT_KEYCLOAK_ISSUER: http://migration.invalid/realms/devkit
+    networks:
+      - devkit-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  devkit-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: devkit-api
+    restart: unless-stopped
+    depends_on:
+      devkit-migrate:
+        condition: service_completed_successfully
+    environment:
+      DEVKIT_DB_URL: jdbc:postgresql://devkit-db:5432/${DEVKIT_DB_NAME:-devkit}
+      DEVKIT_DB_USER: ${DEVKIT_DB_APP_USER:-devkit_app}
+      DEVKIT_DB_PASSWORD: ${DEVKIT_DB_APP_PASSWORD:-${DEVKIT_DB_PASSWORD:?Set DEVKIT_DB_APP_PASSWORD in .env}}
+      SPRING_LIQUIBASE_ENABLED: "false"
+      DEVKIT_SERVER_ADDRESS: 0.0.0.0
+      DEVKIT_SERVER_PORT: 8080
+      DEVKIT_GATEWAY_ISSUER: ${DEVKIT_GATEWAY_ISSUER:-http://localhost:8082}
+      DEVKIT_GATEWAY_JWK_SET_URI: http://devkit-gateway:8080/.well-known/jwks.json
+      DEVKIT_GATEWAY_AUDIENCE: ${DEVKIT_GATEWAY_AUDIENCE:-devkit-sync-api}
+      DEVKIT_KEYCLOAK_ISSUER: ${DEVKIT_KEYCLOAK_ISSUER:-http://localhost:8081/realms/devkit}
+      DEVKIT_DEVICE_ENROLLMENT_TTL: ${DEVKIT_DEVICE_ENROLLMENT_TTL:-10m}
+      DEVKIT_SYNC_MAX_OPERATIONS: ${DEVKIT_SYNC_MAX_OPERATIONS:-1000000}
+      DEVKIT_SYNC_MAX_BYTES: ${DEVKIT_SYNC_MAX_BYTES:-10737418240}
+      DEVKIT_RETENTION_ENABLED: ${DEVKIT_RETENTION_ENABLED:-true}
+      DEVKIT_AUDIT_RETENTION: ${DEVKIT_AUDIT_RETENTION:-90d}
+      DEVKIT_RETENTION_CRON: ${DEVKIT_RETENTION_CRON:-0 15 3 * * *}
+    networks:
+      - devkit-network
+      - sync-private-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
+  devkit-gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile.gateway
+    container_name: devkit-gateway
+    restart: unless-stopped
+    depends_on:
+      keycloak:
+        condition: service_started
+      devkit-api:
+        condition: service_started
+      gateway-key-init:
+        condition: service_completed_successfully
+    environment:
+      DEVKIT_GATEWAY_SERVER_ADDRESS: 0.0.0.0
+      DEVKIT_GATEWAY_SERVER_PORT: 8080
+      DEVKIT_BACKEND_URL: http://devkit-api:8080
+      DEVKIT_KEYCLOAK_ISSUER: ${DEVKIT_KEYCLOAK_ISSUER:-http://localhost:8081/realms/devkit}
+      DEVKIT_KEYCLOAK_JWK_SET_URI: http://keycloak:8080/realms/devkit/protocol/openid-connect/certs
+      DEVKIT_KEYCLOAK_AUDIENCE: ${DEVKIT_KEYCLOAK_AUDIENCE:-devkit-sync-gateway}
+      DEVKIT_GATEWAY_ISSUER: ${DEVKIT_GATEWAY_ISSUER:-http://localhost:8082}
+      DEVKIT_GATEWAY_AUDIENCE: ${DEVKIT_GATEWAY_AUDIENCE:-devkit-sync-api}
+      DEVKIT_GATEWAY_TOKEN_TTL: ${DEVKIT_GATEWAY_TOKEN_TTL:-45s}
+      DEVKIT_GATEWAY_SIGNING_KEY_ID: ${DEVKIT_GATEWAY_SIGNING_KEY_ID:-devkit-gateway-local}
+      DEVKIT_GATEWAY_SIGNING_PRIVATE_KEY_PATH: /run/secrets/devkit-gateway/private.pem
+      DEVKIT_GATEWAY_SIGNING_PUBLIC_KEY_PATH: /run/secrets/devkit-gateway/public.pem
+      DEVKIT_GATEWAY_IP_REQUESTS_PER_MINUTE: ${DEVKIT_GATEWAY_IP_REQUESTS_PER_MINUTE:-120}
+      DEVKIT_GATEWAY_SUBJECT_REQUESTS_PER_MINUTE: ${DEVKIT_GATEWAY_SUBJECT_REQUESTS_PER_MINUTE:-300}
+      DEVKIT_GATEWAY_MAX_CONCURRENT_REQUESTS: ${DEVKIT_GATEWAY_MAX_CONCURRENT_REQUESTS:-64}
+      DEVKIT_GATEWAY_MAX_TRACKED_KEYS: ${DEVKIT_GATEWAY_MAX_TRACKED_KEYS:-10000}
+    ports:
+      - "127.0.0.1:${DEVKIT_GATEWAY_PORT:-8082}:8080"
+    volumes:
+      - gateway-key-data:/run/secrets/devkit-gateway:ro
+    networks:
+      - keycloak-network
+      - sync-private-network
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
 
 volumes:
   keycloak-db-data:
   devkit-db-data:
+  gateway-key-data:
 
 networks:
   keycloak-network:
     driver: bridge
   devkit-network:
+    driver: bridge
+  sync-private-network:
     driver: bridge

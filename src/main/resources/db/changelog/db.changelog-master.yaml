@@ -9,3 +9,7 @@ databaseChangeLog:
       file: db/changelog/changes/004-create-entity-heads.yaml
   - include:
       file: db/changelog/changes/005-create-audit-events.yaml
+  - include:
+      file: db/changelog/changes/006-create-device-enrollments.yaml
+  - include:
+      file: db/changelog/changes/007-create-account-storage-usage.yaml

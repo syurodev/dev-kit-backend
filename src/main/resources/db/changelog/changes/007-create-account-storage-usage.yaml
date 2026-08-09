@@ -1,0 +1,22 @@
+databaseChangeLog:
+  - changeSet:
+      id: 007-create-account-storage-usage
+      author: devkit
+      changes:
+        - sql:
+            sql: |
+              CREATE TABLE account_storage_usage (
+                  account_id uuid PRIMARY KEY,
+                  operations_used bigint NOT NULL,
+                  bytes_used bigint NOT NULL,
+                  updated_at timestamptz NOT NULL,
+                  CONSTRAINT ck_account_storage_operations_nonnegative CHECK (operations_used >= 0),
+                  CONSTRAINT ck_account_storage_bytes_nonnegative CHECK (bytes_used >= 0)
+              );
+              INSERT INTO account_storage_usage(account_id, operations_used, bytes_used, updated_at)
+              SELECT account_id,
+                     count(*),
+                     coalesce(sum(octet_length(envelope::text) + 4096), 0),
+                     CURRENT_TIMESTAMP
+              FROM replication_log
+              GROUP BY account_id;

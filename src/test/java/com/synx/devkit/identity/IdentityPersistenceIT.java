@@ -26,6 +26,8 @@ class IdentityPersistenceIT extends PostgresTestSupport {
     @BeforeEach
     void clearIdentityData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }
@@ -38,6 +40,7 @@ class IdentityPersistenceIT extends PostgresTestSupport {
                         null,
                         "concurrent-device",
                         1,
+                        null,
                         Instant.now().plusSeconds(600),
                         "concurrent-test"))
                 .accountId();

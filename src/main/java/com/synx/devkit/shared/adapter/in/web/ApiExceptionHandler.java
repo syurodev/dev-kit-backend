@@ -2,6 +2,7 @@ package com.synx.devkit.shared.adapter.in.web;
 
 import com.synx.devkit.shared.error.DomainException;
 import com.synx.devkit.shared.error.ForbiddenException;
+import com.synx.devkit.shared.error.QuotaExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,6 +32,12 @@ public final class ApiExceptionHandler {
     @ExceptionHandler(PayloadTooLargeException.class)
     ResponseEntity<ApiErrorResponse> tooLarge(PayloadTooLargeException error, HttpServletRequest request) {
         return response(HttpStatus.CONTENT_TOO_LARGE, "payload_too_large", "Request body is too large", request);
+    }
+
+    @ExceptionHandler(QuotaExceededException.class)
+    ResponseEntity<ApiErrorResponse> quotaExceeded(QuotaExceededException error, HttpServletRequest request) {
+        return response(HttpStatus.INSUFFICIENT_STORAGE,
+                error.code(), "Account storage quota is exhausted", request);
     }
 
     @ExceptionHandler({

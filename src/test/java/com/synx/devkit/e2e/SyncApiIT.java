@@ -42,8 +42,10 @@ class SyncApiIT extends PostgresTestSupport {
     @BeforeEach
     void clearBusinessData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
         jdbc.sql("DELETE FROM entity_heads").update();
         jdbc.sql("DELETE FROM replication_log").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }
@@ -79,7 +81,7 @@ class SyncApiIT extends PostgresTestSupport {
 
         // A second device for the same subject sees the same account, then
         // pushing the already-used version produces metadata-only conflict.
-        establishSession("device-b");
+        establishEnrolledSession("device-b", createEnrollment("device-a", "device-b"));
         PushRequest stale = pushRequest(accountId, "device-b", "idem-b", "op-b", 1);
         mvc.perform(post("/v1/sync/push")
                         .with(identity())
@@ -151,6 +153,18 @@ class SyncApiIT extends PostgresTestSupport {
                         .queryParam("cursor", "")
                         .queryParam("limit", "100"))
                 .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/sync/session")
+                        .with(identity("subject-1"))
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "rotated-device-id")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/v1/sync/devices/enrollments")
+                        .with(identity("subject-1"))
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_device_id\":\"rotated-device-id\"}"))
+                .andExpect(status().isForbidden());
     }
 
     @Test
@@ -221,20 +235,47 @@ class SyncApiIT extends PostgresTestSupport {
     }
 
     private String establishSession(String deviceId) throws Exception {
-        return establishSession("keycloak-subject-1", deviceId);
+        return establishSession("keycloak-subject-1", deviceId, null);
+    }
+
+    private String establishEnrolledSession(String deviceId, String enrollmentToken) throws Exception {
+        return establishSession("keycloak-subject-1", deviceId, enrollmentToken);
     }
 
     private String establishSession(String subject, String deviceId) throws Exception {
-        String json = mvc.perform(get("/v1/sync/session")
+        return establishSession(subject, deviceId, null);
+    }
+
+    private String establishSession(String subject, String deviceId, String enrollmentToken) throws Exception {
+        var request = get("/v1/sync/session")
                         .with(identity(subject))
                         .header(SyncHeaderResolver.DEVICE_HEADER, deviceId)
-                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1");
+        if (enrollmentToken != null) {
+            request.header("X-DevKit-Enrollment-Token", enrollmentToken);
+        }
+        String json = mvc.perform(request)
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.device_id").value(deviceId))
                 .andReturn()
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(json).get("account_id").asString();
+    }
+
+    private String createEnrollment(String authorizingDeviceId, String targetDeviceId) throws Exception {
+        String json = mvc.perform(post("/v1/sync/devices/enrollments")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, authorizingDeviceId)
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"target_device_id\":\"" + targetDeviceId + "\"}"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.target_device_id").value(targetDeviceId))
+                .andReturn()
+                .getResponse()
+                .getContentAsString();
+        return objectMapper.readTree(json).get("enrollment_token").asString();
     }
 
     private static PushRequest pushRequest(

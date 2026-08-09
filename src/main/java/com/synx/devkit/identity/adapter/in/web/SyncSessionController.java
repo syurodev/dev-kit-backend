@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RestController
 @RequestMapping("/v1/sync/session")
 public final class SyncSessionController {
+    public static final String ENROLLMENT_HEADER = "X-DevKit-Enrollment-Token";
     private final GatewayIdentityResolver identities;
     private final SyncHeaderResolver headers;
     private final EstablishSyncSessionUseCase sessions;
@@ -33,6 +34,7 @@ public final class SyncSessionController {
             @AuthenticationPrincipal Jwt jwt,
             @RequestHeader(SyncHeaderResolver.DEVICE_HEADER) String deviceId,
             @RequestHeader(SyncHeaderResolver.PROTOCOL_HEADER) String protocolText,
+            @RequestHeader(value = ENROLLMENT_HEADER, required = false) String enrollmentToken,
             HttpServletRequest request) {
         var identity = identities.resolve(jwt);
         var syncHeaders = headers.resolve(deviceId, protocolText);
@@ -42,6 +44,7 @@ public final class SyncSessionController {
                 identity.preferredUsername(),
                 syncHeaders.deviceId(),
                 syncHeaders.protocolVersion(),
+                enrollmentToken,
                 identity.upstreamExpiresAt(),
                 requestId(request)));
         return new SessionResponse(

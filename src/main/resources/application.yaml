@@ -19,11 +19,22 @@ server:
     include-stacktrace: never
 
 devkit:
+  identity:
+    enrollment:
+      lifetime: ${DEVKIT_DEVICE_ENROLLMENT_TTL:10m}
   security:
     issuer: ${DEVKIT_GATEWAY_ISSUER:}
     jwk-set-uri: ${DEVKIT_GATEWAY_JWK_SET_URI:}
     audience: ${DEVKIT_GATEWAY_AUDIENCE:devkit-sync-api}
     upstream-issuer: ${DEVKIT_KEYCLOAK_ISSUER:}
+  sync:
+    quota:
+      max-operations: ${DEVKIT_SYNC_MAX_OPERATIONS:1000000}
+      max-bytes: ${DEVKIT_SYNC_MAX_BYTES:10737418240}
+  retention:
+    enabled: ${DEVKIT_RETENTION_ENABLED:true}
+    audit-lifetime: ${DEVKIT_AUDIT_RETENTION:90d}
+    cron: "${DEVKIT_RETENTION_CRON:0 15 3 * * *}"
 
 management:
   endpoints:

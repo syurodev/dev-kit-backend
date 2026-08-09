@@ -58,6 +58,8 @@ class GatewayJwtSecurityIT extends PostgresTestSupport {
     @BeforeEach
     void clearIdentityData() {
         jdbc.sql("DELETE FROM audit_events").update();
+        jdbc.sql("DELETE FROM device_enrollments").update();
+        jdbc.sql("DELETE FROM account_storage_usage").update();
         jdbc.sql("DELETE FROM devices").update();
         jdbc.sql("DELETE FROM accounts").update();
     }

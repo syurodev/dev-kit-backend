@@ -185,7 +185,8 @@ Rules:
 
 - account lookup/create dùng `subject`, không dùng email/username;
 - cùng `(accountId, deviceId)` chỉ có một device;
-- device mới được tạo `ACTIVE` tại session handshake;
+- device đầu tiên được bootstrap `ACTIVE` tại session handshake dưới account lock;
+- device tiếp theo cần enrollment token một lần do một device `ACTIVE` tạo;
 - session với device `REVOKED` trả `403`; session không tự reactivate;
 - request push/pull phải check device vẫn active, không chỉ tin session trước đó;
 - protocol khác `1` bị từ chối trước business operation.
@@ -352,6 +353,7 @@ Go client decode bằng `DisallowUnknownFields`.
 | `415` | Unsupported content type |
 | `422` | Protocol/envelope/version/identifier/business validation failed |
 | `429` | Rate limited khi control này được bật |
+| `507` | Account đã dùng hết storage/operation quota |
 | `500/503` | Safe internal/unavailable response; không lộ stack trace |
 
 Conflict hợp lệ không dùng HTTP `409`; nó nằm trong `200 push` response để client
@@ -378,9 +380,11 @@ Flow:
 1. Validate gateway identity JWT.
 2. Validate protocol header và device ID syntax.
 3. Find-or-create account bằng trusted `sub`.
-4. Find-or-create device bằng `(accountId, deviceId)`.
-5. Reject nếu device đã `REVOKED`; nếu active thì update `lastSeenAt` và protocol.
-6. Trả internal account ID, echo đúng device ID và upstream token expiry.
+4. Với device đã biết: reject nếu `REVOKED`, nếu active thì update `lastSeenAt`.
+5. Với device chưa biết: bootstrap nếu account chưa có device; ngược lại bắt buộc
+   `X-DevKit-Enrollment-Token` hợp lệ, chưa dùng và đúng target device.
+6. Consume enrollment token atomically rồi tạo device `ACTIVE`.
+7. Trả internal account ID, echo đúng device ID và upstream token expiry.
 
 Response:
 
@@ -393,6 +397,20 @@ Response:
 ```
 
 Response không trả token, Keycloak subject, email, username hoặc roles.
+
+### `POST /v1/sync/devices/enrollments`
+
+Endpoint yêu cầu header của một device đang `ACTIVE` và body:
+
+```json
+{
+  "target_device_id": "new-desktop-device-id"
+}
+```
+
+Response trả `enrollment_token`, `target_device_id`, `expires_at`. Token có 256
+bit entropy, backend chỉ lưu SHA-256 digest, TTL mặc định 10 phút và một token
+chỉ consume được một lần. Token không thể dùng cho target device khác.
 
 Concurrent first session của cùng subject/device phải hội tụ qua unique constraint
 và retry bounded; không tạo account/device trùng.
