@@ -40,6 +40,17 @@ devkit:
       key-id: ${DEVKIT_GATEWAY_SIGNING_KEY_ID:devkit-gateway-local}
       private-key-path: ${DEVKIT_GATEWAY_SIGNING_PRIVATE_KEY_PATH:}
       public-key-path: ${DEVKIT_GATEWAY_SIGNING_PUBLIC_KEY_PATH:}
+  desktop:
+    config:
+      config-version: ${DEVKIT_DESKTOP_CONFIG_VERSION:1}
+      oidc-issuer: ${DEVKIT_DESKTOP_OIDC_ISSUER:}
+      oidc-client-id: ${DEVKIT_DESKTOP_OIDC_CLIENT_ID:devkit-desktop}
+      oidc-scopes: ${DEVKIT_DESKTOP_OIDC_SCOPES:openid profile email roles}
+      oidc-auth-url: ${DEVKIT_DESKTOP_OIDC_AUTH_URL:}
+      oidc-token-url: ${DEVKIT_DESKTOP_OIDC_TOKEN_URL:}
+      min-app-version: ${DEVKIT_DESKTOP_MIN_APP_VERSION:}
+      latest-app-version: ${DEVKIT_DESKTOP_LATEST_APP_VERSION:}
+      update-url: ${DEVKIT_DESKTOP_UPDATE_URL:}
 
 management:
   endpoints:

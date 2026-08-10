@@ -15,13 +15,19 @@ final class GatewayRejectionWriter {
         write(response, 503, "gateway_overloaded", "1");
     }
 
+    static void invalidClientHeader(HttpServletResponse response) throws IOException {
+        write(response, 400, "invalid_client_header", null);
+    }
+
     private static void write(
             HttpServletResponse response,
             int status,
             String code,
             String retryAfter) throws IOException {
         response.setStatus(status);
-        response.setHeader("Retry-After", retryAfter);
+        if (retryAfter != null) {
+            response.setHeader("Retry-After", retryAfter);
+        }
         response.setHeader("Cache-Control", "no-store");
         response.setContentType("application/json");
         response.getWriter().write("{\"code\":\"" + code + "\"}");

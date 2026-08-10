@@ -1,5 +1,6 @@
 package com.synx.devkit.gateway.security;
 
+import com.synx.devkit.gateway.config.DesktopConfigProperties;
 import com.synx.devkit.gateway.configuration.GatewayAbuseProperties;
 import com.synx.devkit.gateway.configuration.GatewayTokenProperties;
 import com.synx.devkit.gateway.configuration.KeycloakJwtProperties;
@@ -22,7 +23,8 @@ import org.springframework.security.web.SecurityFilterChain;
 @EnableConfigurationProperties({
         KeycloakJwtProperties.class,
         GatewayTokenProperties.class,
-        GatewayAbuseProperties.class
+        GatewayAbuseProperties.class,
+        DesktopConfigProperties.class
 })
 public class SecurityConfiguration {
     @Bean
@@ -33,6 +35,11 @@ public class SecurityConfiguration {
     @Bean
     FixedWindowRateLimiter fixedWindowRateLimiter(Clock clock, GatewayAbuseProperties properties) {
         return new FixedWindowRateLimiter(clock, properties.getMaxTrackedKeys());
+    }
+
+    @Bean
+    DesktopClientHeaderFilter desktopClientHeaderFilter() {
+        return new DesktopClientHeaderFilter();
     }
 
     @Bean
@@ -65,6 +72,7 @@ public class SecurityConfiguration {
     @Bean
     SecurityFilterChain gatewaySecurity(
             HttpSecurity http,
+            DesktopClientHeaderFilter desktopClientHeaderFilter,
             IpRateLimitFilter ipRateLimitFilter,
             SubjectAbuseProtectionFilter subjectAbuseProtectionFilter,
             GatewayIdentityRelayFilter identityRelayFilter,
@@ -75,6 +83,8 @@ public class SecurityConfiguration {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers("/.well-known/jwks.json", "/actuator/health", "/actuator/info")
                         .permitAll()
+                        .requestMatchers("/v1/desktop/config")
+                        .permitAll()
                         .requestMatchers("/v1/sync/**")
                         .authenticated()
                         .anyRequest()
@@ -82,6 +92,7 @@ public class SecurityConfiguration {
                 .oauth2ResourceServer(resource -> resource
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .jwt(Customizer.withDefaults()))
+                .addFilterBefore(desktopClientHeaderFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterBefore(ipRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(subjectAbuseProtectionFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(identityRelayFilter, SubjectAbuseProtectionFilter.class)
