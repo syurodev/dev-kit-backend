@@ -47,3 +47,8 @@ docs/superpowser/
 # secret manager or a read-only mounted secret, never from Git.
 .local/
 .DS_Store
+docs/superpowers/*
+.agent/
+.agents/
+.codex/
+.cursor/.superpowers/.worktrees/
