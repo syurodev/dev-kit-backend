@@ -70,7 +70,13 @@ docker compose -f deploy/server/docker-compose.infrastructure.yml \
 
 ## Redis choice
 
-The Java backend does not currently consume Redis, so this stack does not start
+The gateway uses Redis for distributed rate limiting on `GET /v1/desktop/config`
+only. Configure `DEVKIT_REDIS_HOST`, `DEVKIT_REDIS_PORT`, and
+`DEVKIT_REDIS_PASSWORD` (from Infisical in production). When Redis is unavailable
+the gateway fails open for that endpoint and logs a warning; other routes keep
+the in-memory per-instance limiter.
+
+The sync API backend does not currently consume Redis, so this stack does not start
 a duplicate Redis by default. Reuse the server's existing Redis only after
 creating a dedicated ACL/user or logical database and passing its TLS-enabled
 URL to the future Kubernetes deployment.

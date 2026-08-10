@@ -7,14 +7,15 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.springframework.web.filter.OncePerRequestFilter;
 
-/** Limits requests before JWT parsing, protecting both public and authenticated endpoints. */
-public final class IpRateLimitFilter extends OncePerRequestFilter {
-    private static final String DESKTOP_CONFIG_PATH = "/v1/desktop/config";
+/** Redis-backed rate limit for the public desktop config endpoint only. */
+public final class DesktopConfigRateLimitFilter extends OncePerRequestFilter {
+    private static final String CONFIG_PATH = "/v1/desktop/config";
+    private static final String KEY_PREFIX = "desktop-config:rl:";
 
-    private final FixedWindowRateLimiter limiter;
+    private final RedisFixedWindowRateLimiter limiter;
     private final int requestsPerMinute;
 
-    public IpRateLimitFilter(FixedWindowRateLimiter limiter, int requestsPerMinute) {
+    public DesktopConfigRateLimitFilter(RedisFixedWindowRateLimiter limiter, int requestsPerMinute) {
         this.limiter = limiter;
         this.requestsPerMinute = requestsPerMinute;
     }
@@ -24,13 +25,13 @@ public final class IpRateLimitFilter extends OncePerRequestFilter {
             HttpServletRequest request,
             HttpServletResponse response,
             FilterChain chain) throws ServletException, IOException {
-        if (DESKTOP_CONFIG_PATH.equals(request.getRequestURI())) {
+        if (!CONFIG_PATH.equals(request.getRequestURI())) {
             chain.doFilter(request, response);
             return;
         }
         // X-Forwarded-For is intentionally ignored until a trusted edge proxy
         // is configured; accepting it here would let clients rotate identities.
-        if (!limiter.allow("ip:" + request.getRemoteAddr(), requestsPerMinute)) {
+        if (!limiter.allow(KEY_PREFIX + request.getRemoteAddr(), requestsPerMinute)) {
             GatewayRejectionWriter.rateLimited(response);
             return;
         }

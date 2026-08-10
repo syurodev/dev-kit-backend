@@ -1,5 +1,6 @@
 package com.synx.devkit.gateway.security;
 
+import com.synx.devkit.gateway.config.DesktopConfigAbuseProperties;
 import com.synx.devkit.gateway.config.DesktopConfigProperties;
 import com.synx.devkit.gateway.configuration.GatewayAbuseProperties;
 import com.synx.devkit.gateway.configuration.GatewayTokenProperties;
@@ -8,6 +9,7 @@ import java.time.Clock;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.http.SessionCreationPolicy;
@@ -24,7 +26,8 @@ import org.springframework.security.web.SecurityFilterChain;
         KeycloakJwtProperties.class,
         GatewayTokenProperties.class,
         GatewayAbuseProperties.class,
-        DesktopConfigProperties.class
+        DesktopConfigProperties.class,
+        DesktopConfigAbuseProperties.class
 })
 public class SecurityConfiguration {
     @Bean
@@ -40,6 +43,18 @@ public class SecurityConfiguration {
     @Bean
     DesktopClientHeaderFilter desktopClientHeaderFilter() {
         return new DesktopClientHeaderFilter();
+    }
+
+    @Bean
+    RedisFixedWindowRateLimiter redisFixedWindowRateLimiter(StringRedisTemplate redisTemplate) {
+        return new RedisFixedWindowRateLimiter(redisTemplate);
+    }
+
+    @Bean
+    DesktopConfigRateLimitFilter desktopConfigRateLimitFilter(
+            RedisFixedWindowRateLimiter limiter,
+            DesktopConfigAbuseProperties properties) {
+        return new DesktopConfigRateLimitFilter(limiter, properties.getRequestsPerMinute());
     }
 
     @Bean
@@ -73,6 +88,7 @@ public class SecurityConfiguration {
     SecurityFilterChain gatewaySecurity(
             HttpSecurity http,
             DesktopClientHeaderFilter desktopClientHeaderFilter,
+            DesktopConfigRateLimitFilter desktopConfigRateLimitFilter,
             IpRateLimitFilter ipRateLimitFilter,
             SubjectAbuseProtectionFilter subjectAbuseProtectionFilter,
             GatewayIdentityRelayFilter identityRelayFilter,
@@ -93,6 +109,7 @@ public class SecurityConfiguration {
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .jwt(Customizer.withDefaults()))
                 .addFilterBefore(desktopClientHeaderFilter, BearerTokenAuthenticationFilter.class)
+                .addFilterBefore(desktopConfigRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterBefore(ipRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(subjectAbuseProtectionFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(identityRelayFilter, SubjectAbuseProtectionFilter.class)

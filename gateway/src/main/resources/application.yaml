@@ -1,6 +1,11 @@
 spring:
   application:
     name: dev-kit-gateway
+  data:
+    redis:
+      host: ${DEVKIT_REDIS_HOST:localhost}
+      port: ${DEVKIT_REDIS_PORT:6379}
+      password: ${DEVKIT_REDIS_PASSWORD:}
   cloud:
     gateway:
       server:
@@ -42,6 +47,8 @@ devkit:
       public-key-path: ${DEVKIT_GATEWAY_SIGNING_PUBLIC_KEY_PATH:}
   desktop:
     config:
+      abuse:
+        requests-per-minute: ${DEVKIT_DESKTOP_CONFIG_REQUESTS_PER_MINUTE:60}
       config-version: ${DEVKIT_DESKTOP_CONFIG_VERSION:1}
       oidc-issuer: ${DEVKIT_DESKTOP_OIDC_ISSUER:}
       oidc-client-id: ${DEVKIT_DESKTOP_OIDC_CLIENT_ID:devkit-desktop}
