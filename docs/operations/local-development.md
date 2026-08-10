@@ -120,6 +120,75 @@ DEVKIT_BACKEND_E2E_TOKEN='<signed-gateway-jwt>' \
 go test ./internal/sync -run '^TestBackendContractE2E$' -count=1
 ```
 
+## 5. Deployed sync matrix (Phase 3 closure)
+
+Gate G1 trong desktop repo (`cmd/synce2e`) kiểm tra pull/apply đa loại vault
+item (`note`, `db-profile`, `ssh-profile`) qua Gateway Compose. Test chỉ chạy
+khi export hai biến môi trường; thiếu biến thì skip, có biến mà stack sai thì
+fail.
+
+### Khởi động stack
+
+```bash
+docker compose up -d --build
+```
+
+Đợi Gateway healthy:
+
+```bash
+curl --fail http://127.0.0.1:8082/actuator/health
+```
+
+### Lấy bearer token (Keycloak realm `devkit`)
+
+Gateway chấp nhận Keycloak access token cho audience `devkit-sync-gateway`.
+Không dán token thật vào doc, commit hay log.
+
+Realm import mặc định không tạo user. Tạo user test qua Admin Console
+(`http://localhost:8081`) hoặc Admin API. Nếu realm local tắt self-registration
+và direct grant, chỉ dùng user/password đã tạo thủ công trong `.env` cá nhân
+(không commit).
+
+Lấy access token bằng password grant qua client `devkit-desktop` (mapper thêm
+audience `devkit-sync-gateway`; thay placeholder bằng giá trị local):
+
+```bash
+export DEVKIT_E2E_USERNAME='<local-test-user>'
+export DEVKIT_E2E_PASSWORD='<local-test-password>'
+export DEVKIT_DEPLOYED_E2E_TOKEN="$(
+  curl --fail --silent --show-error \
+    -X POST "http://localhost:8081/realms/devkit/protocol/openid-connect/token" \
+    -H 'Content-Type: application/x-www-form-urlencoded' \
+    -d "grant_type=password" \
+    -d "client_id=devkit-desktop" \
+    -d "username=${DEVKIT_E2E_USERNAME}" \
+    -d "password=${DEVKIT_E2E_PASSWORD}" \
+  | jq -r '.access_token'
+)"
+export DEVKIT_DEPLOYED_E2E_URL=http://127.0.0.1:8082
+```
+
+Nếu client `devkit-desktop` chưa bật direct access grants, bật tạm trên
+client local hoặc dùng flow phù hợp với cấu hình realm (ví dụ device code /
+authorization code qua browser) rồi export token vào
+`DEVKIT_DEPLOYED_E2E_TOKEN`.
+
+### Chạy matrix
+
+Từ checkout desktop (worktree Phase 3 hoặc repo chính):
+
+```bash
+go test ./cmd/synce2e/ -count=1
+```
+
+Chỉ gate G1:
+
+```bash
+go test ./cmd/synce2e/ -run '^TestG1' -count=1 -timeout 5m
+```
+
+Kỳ vọng: `TestG1MultiEntityPullApply` PASS khi stack healthy và token còn hạn.
+
 ## Troubleshooting an toàn
 
 - Startup fail datasource: kiểm tra tên biến và URL, không in password.
