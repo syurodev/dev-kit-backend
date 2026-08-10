@@ -11,12 +11,18 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Base64;
+import java.util.List;
+import jakarta.servlet.Filter;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
+import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import com.synx.devkit.gateway.security.DesktopClientHeaderFilter;
+import com.synx.devkit.gateway.security.DesktopConfigRateLimitFilter;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class DesktopConfigIT {
@@ -26,6 +32,9 @@ class DesktopConfigIT {
 
     @LocalServerPort
     private int gatewayPort;
+
+    @Autowired
+    private SecurityFilterChain securityFilterChain;
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -53,6 +62,14 @@ class DesktopConfigIT {
         Files.deleteIfExists(KEY_DIRECTORY.resolve("private.pem"));
         Files.deleteIfExists(KEY_DIRECTORY.resolve("public.pem"));
         Files.deleteIfExists(KEY_DIRECTORY);
+    }
+
+    @Test
+    void desktopConfigHeaderFilterRunsBeforeRedisRateLimit() {
+        List<Filter> filters = securityFilterChain.getFilters();
+        int headerIndex = filterIndex(filters, DesktopClientHeaderFilter.class);
+        int redisRateLimitIndex = filterIndex(filters, DesktopConfigRateLimitFilter.class);
+        assertThat(headerIndex).isGreaterThan(-1).isLessThan(redisRateLimitIndex);
     }
 
     @Test
@@ -100,6 +117,15 @@ class DesktopConfigIT {
 
     private URI gatewayUri(String path) {
         return URI.create("http://127.0.0.1:" + gatewayPort + path);
+    }
+
+    private static int filterIndex(List<Filter> filters, Class<?> type) {
+        for (int index = 0; index < filters.size(); index++) {
+            if (type.isInstance(filters.get(index))) {
+                return index;
+            }
+        }
+        return -1;
     }
 
     private static RSAKey generateKey(String keyId) {

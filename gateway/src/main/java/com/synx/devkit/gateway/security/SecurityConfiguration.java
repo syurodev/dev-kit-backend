@@ -108,8 +108,10 @@ public class SecurityConfiguration {
                 .oauth2ResourceServer(resource -> resource
                         .authenticationEntryPoint(authenticationEntryPoint)
                         .jwt(Customizer.withDefaults()))
-                .addFilterBefore(desktopClientHeaderFilter, BearerTokenAuthenticationFilter.class)
+                // Chain desktop-config filters so invalid headers never hit Redis RL.
+                // Inbound /v1/desktop/config: ip RL (skips path) -> header check -> Redis RL -> ...
                 .addFilterBefore(desktopConfigRateLimitFilter, BearerTokenAuthenticationFilter.class)
+                .addFilterBefore(desktopClientHeaderFilter, DesktopConfigRateLimitFilter.class)
                 .addFilterBefore(ipRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(subjectAbuseProtectionFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(identityRelayFilter, SubjectAbuseProtectionFilter.class)
