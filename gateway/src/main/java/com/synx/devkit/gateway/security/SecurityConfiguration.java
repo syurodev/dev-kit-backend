@@ -67,7 +67,8 @@ public class SecurityConfiguration {
             HttpSecurity http,
             IpRateLimitFilter ipRateLimitFilter,
             SubjectAbuseProtectionFilter subjectAbuseProtectionFilter,
-            GatewayIdentityRelayFilter identityRelayFilter) throws Exception {
+            GatewayIdentityRelayFilter identityRelayFilter,
+            GatewayAuthenticationEntryPoint authenticationEntryPoint) throws Exception {
         return http
                 .csrf(csrf -> csrf.disable())
                 .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
@@ -78,7 +79,9 @@ public class SecurityConfiguration {
                         .authenticated()
                         .anyRequest()
                         .denyAll())
-                .oauth2ResourceServer(resource -> resource.jwt(Customizer.withDefaults()))
+                .oauth2ResourceServer(resource -> resource
+                        .authenticationEntryPoint(authenticationEntryPoint)
+                        .jwt(Customizer.withDefaults()))
                 .addFilterBefore(ipRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(subjectAbuseProtectionFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(identityRelayFilter, SubjectAbuseProtectionFilter.class)

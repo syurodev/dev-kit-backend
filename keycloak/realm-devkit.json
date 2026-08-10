@@ -41,8 +41,7 @@
       "directAccessGrantsEnabled": false,
       "serviceAccountsEnabled": false,
       "redirectUris": [
-        "http://127.0.0.1:*/*",
-        "http://localhost:*/*"
+        "http://127.0.0.1:62364/callback"
       ],
       "webOrigins": [
         "+"
