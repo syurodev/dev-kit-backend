@@ -68,6 +68,28 @@ docker compose -f deploy/server/docker-compose.infrastructure.yml \
   logs --tail=100 devkit-otel-collector
 ```
 
+## Desktop remote config (`GET /v1/desktop/config`)
+
+Public gateway route (no JWT). Desktop sends `X-DevKit-Client: desktop/<semver>`;
+invalid/missing header → `400`. Set at least `DEVKIT_DESKTOP_OIDC_ISSUER` in
+production or the endpoint returns `503`.
+
+| Env var | Default | Purpose |
+| --- | --- | --- |
+| `DEVKIT_DESKTOP_OIDC_ISSUER` | (required) | Keycloak realm issuer in JSON `oidc_issuer` |
+| `DEVKIT_DESKTOP_CONFIG_VERSION` | `1` | Opaque `config_version` |
+| `DEVKIT_DESKTOP_OIDC_CLIENT_ID` | `devkit-desktop` | Optional override |
+| `DEVKIT_DESKTOP_OIDC_SCOPES` | `openid profile email roles` | Optional override |
+| `DEVKIT_DESKTOP_OIDC_AUTH_URL` | (omit) | Optional authorize URL override |
+| `DEVKIT_DESKTOP_OIDC_TOKEN_URL` | (omit) | Optional token URL override |
+| `DEVKIT_DESKTOP_MIN_APP_VERSION` | (omit) | Semver floor for desktop gate |
+| `DEVKIT_DESKTOP_LATEST_APP_VERSION` | (omit) | Optional update hint |
+| `DEVKIT_DESKTOP_UPDATE_URL` | (omit) | Optional release/download URL |
+| `DEVKIT_DESKTOP_CONFIG_REQUESTS_PER_MINUTE` | `60` | Per-IP Redis budget |
+
+Add `DEVKIT_DESKTOP_OIDC_ISSUER` (and optional fields above) to the same
+Infisical path as the other DevKit secrets when deploying the gateway.
+
 ## Redis choice
 
 The gateway uses Redis for distributed rate limiting on `GET /v1/desktop/config`
