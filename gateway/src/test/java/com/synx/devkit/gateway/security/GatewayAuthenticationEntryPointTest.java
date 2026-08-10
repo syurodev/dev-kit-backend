@@ -31,6 +31,8 @@ class GatewayAuthenticationEntryPointTest {
         assertThat(diagnostic.fingerprint()).matches("[a-f0-9]{16}");
         assertThat(diagnostic.keyId()).isEqualTo("key-123");
         assertThat(diagnostic.algorithm()).isEqualTo("RS256");
+        assertThat(diagnostic.type()).isEqualTo("unavailable");
+        assertThat(diagnostic.certificateBound()).isEqualTo("absent");
     }
 
     private static String reason(String description) {

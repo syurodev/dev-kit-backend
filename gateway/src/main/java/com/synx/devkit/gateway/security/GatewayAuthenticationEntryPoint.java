@@ -36,13 +36,15 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
             HttpServletResponse response,
             AuthenticationException failure) throws IOException {
         TokenDiagnostic token = tokenDiagnostic(request);
-        LOG.warn("Gateway rejected OIDC token for {} {}: reason={} token_fingerprint={} kid={} alg={}",
+        LOG.warn("Gateway rejected OIDC token for {} {}: reason={} token_fingerprint={} kid={} alg={} typ={} certificate_bound={}",
                 request.getMethod(),
                 request.getRequestURI(),
                 safeReason(failure),
                 token.fingerprint(),
                 token.keyId(),
-                token.algorithm());
+                token.algorithm(),
+                token.type(),
+                token.certificateBound());
         delegate.commence(request, response, failure);
     }
 
@@ -88,6 +90,12 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
         if (normalized.contains("invalid jwt") || normalized.contains("malformed jwt")) {
             return "jwt_malformed";
         }
+        if (normalized.contains("typ") && normalized.contains("jwt")) {
+            return "jwt_type_invalid";
+        }
+        if (normalized.contains("x509certificate") || normalized.contains("thumbprint")) {
+            return "certificate_bound_token_rejected";
+        }
         return "invalid_token";
     }
 
@@ -111,9 +119,25 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
             return new TokenDiagnostic(
                     tokenFingerprint(token),
                     safeHeaderValue(parsed.getHeader().getKeyID()),
-                    safeHeaderValue(parsed.getHeader().getAlgorithm().getName()));
+                    safeHeaderValue(parsed.getHeader().getAlgorithm().getName()),
+                    safeHeaderValue(parsed.getHeader().getType() == null
+                            ? null
+                            : parsed.getHeader().getType().toString()),
+                    hasCertificateThumbprint(parsed));
         } catch (Exception exception) {
-            return new TokenDiagnostic(tokenFingerprint(token), "unavailable", "unavailable");
+            return new TokenDiagnostic(tokenFingerprint(token), "unavailable", "unavailable", "unavailable", "unknown");
+        }
+    }
+
+    private static String hasCertificateThumbprint(SignedJWT token) {
+        try {
+            Object confirmation = token.getJWTClaimsSet().getClaim("cnf");
+            if (!(confirmation instanceof java.util.Map<?, ?> confirmationMap)) {
+                return "absent";
+            }
+            return confirmationMap.containsKey("x5t#S256") ? "present" : "absent";
+        } catch (Exception exception) {
+            return "unknown";
         }
     }
 
@@ -136,9 +160,14 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
         return value != null && SAFE_HEADER_VALUE.matcher(value).matches() ? value : "unavailable";
     }
 
-    record TokenDiagnostic(String fingerprint, String keyId, String algorithm) {
+    record TokenDiagnostic(
+            String fingerprint,
+            String keyId,
+            String algorithm,
+            String type,
+            String certificateBound) {
         static TokenDiagnostic unavailable() {
-            return new TokenDiagnostic("unavailable", "unavailable", "unavailable");
+            return new TokenDiagnostic("unavailable", "unavailable", "unavailable", "unavailable", "unknown");
         }
     }
 }
