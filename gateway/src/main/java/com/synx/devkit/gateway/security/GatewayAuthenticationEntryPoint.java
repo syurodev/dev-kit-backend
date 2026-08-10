@@ -3,7 +3,12 @@ package com.synx.devkit.gateway.security;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Locale;
+import java.util.regex.Pattern;
+import com.nimbusds.jwt.SignedJWT;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.security.core.AuthenticationException;
@@ -22,6 +27,7 @@ import org.springframework.stereotype.Component;
 @Component
 public final class GatewayAuthenticationEntryPoint implements AuthenticationEntryPoint {
     private static final Logger LOG = LoggerFactory.getLogger(GatewayAuthenticationEntryPoint.class);
+    private static final Pattern SAFE_HEADER_VALUE = Pattern.compile("[A-Za-z0-9._-]{1,128}");
     private final BearerTokenAuthenticationEntryPoint delegate = new BearerTokenAuthenticationEntryPoint();
 
     @Override
@@ -29,8 +35,14 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
             HttpServletRequest request,
             HttpServletResponse response,
             AuthenticationException failure) throws IOException {
-        LOG.warn("Gateway rejected OIDC token for {} {}: reason={}",
-                request.getMethod(), request.getRequestURI(), safeReason(failure));
+        TokenDiagnostic token = tokenDiagnostic(request);
+        LOG.warn("Gateway rejected OIDC token for {} {}: reason={} token_fingerprint={} kid={} alg={}",
+                request.getMethod(),
+                request.getRequestURI(),
+                safeReason(failure),
+                token.fingerprint(),
+                token.keyId(),
+                token.algorithm());
         delegate.commence(request, response, failure);
     }
 
@@ -77,5 +89,56 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
             return "jwt_malformed";
         }
         return "invalid_token";
+    }
+
+    /**
+     * Produces correlation data without retaining or disclosing a bearer token.
+     *
+     * <p>The header is untrusted until Spring verifies it. Therefore its values
+     * are restricted to a narrow printable allow-list before they reach logs.
+     */
+    static TokenDiagnostic tokenDiagnostic(HttpServletRequest request) {
+        String authorization = request.getHeader("Authorization");
+        if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, 7)) {
+            return TokenDiagnostic.unavailable();
+        }
+        String token = authorization.substring(7);
+        if (token.isBlank() || token.length() > 8 * 1024) {
+            return TokenDiagnostic.unavailable();
+        }
+        try {
+            SignedJWT parsed = SignedJWT.parse(token);
+            return new TokenDiagnostic(
+                    tokenFingerprint(token),
+                    safeHeaderValue(parsed.getHeader().getKeyID()),
+                    safeHeaderValue(parsed.getHeader().getAlgorithm().getName()));
+        } catch (Exception exception) {
+            return new TokenDiagnostic(tokenFingerprint(token), "unavailable", "unavailable");
+        }
+    }
+
+    private static String tokenFingerprint(String token) {
+        try {
+            byte[] hash = MessageDigest.getInstance("SHA-256").digest(token.getBytes(StandardCharsets.US_ASCII));
+            StringBuilder output = new StringBuilder(16);
+            for (int index = 0; index < 8; index++) {
+                output.append(String.format("%02x", hash[index]));
+            }
+            return output.toString();
+        } catch (NoSuchAlgorithmException exception) {
+            // SHA-256 is mandatory in the JRE. Keep the fallback non-sensitive
+            // even if a broken runtime does not provide it.
+            return "unavailable";
+        }
+    }
+
+    private static String safeHeaderValue(String value) {
+        return value != null && SAFE_HEADER_VALUE.matcher(value).matches() ? value : "unavailable";
+    }
+
+    record TokenDiagnostic(String fingerprint, String keyId, String algorithm) {
+        static TokenDiagnostic unavailable() {
+            return new TokenDiagnostic("unavailable", "unavailable", "unavailable");
+        }
     }
 }
