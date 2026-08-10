@@ -51,6 +51,7 @@
         "post.logout.redirect.uris": "+"
       },
       "defaultClientScopes": [
+        "basic",
         "web-origins",
         "acr",
         "profile",

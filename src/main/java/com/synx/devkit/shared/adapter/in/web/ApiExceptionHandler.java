@@ -68,6 +68,14 @@ public final class ApiExceptionHandler {
             String message,
             HttpServletRequest request) {
         Object requestId = request.getAttribute(RequestIdFilter.REQUEST_ID_ATTRIBUTE);
+        // Controller validation/domain exceptions are intentionally converted
+        // to small public responses. Record their safe status/code here so an
+        // operator can distinguish a rejected sync request from a local client
+        // failure without logging a bearer token, cursor, or ciphertext.
+        if (status.is4xxClientError()) {
+            LOG.warn("API request rejected status={} code={} request_id={}",
+                    status.value(), code, requestId == null ? "unknown" : requestId);
+        }
         return ResponseEntity.status(status).body(new ApiErrorResponse(
                 code,
                 message,
