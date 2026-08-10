@@ -45,3 +45,67 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/dev-kit-api:main
           cache-from: type=gha,scope=dev-kit-api
           cache-to: type=gha,mode=max,scope=dev-kit-api
+
+  # Argo CD reconciles the workload repository, not this application repository.
+  # Publish an immutable tag first, then promote that exact tag in GitOps.
+  update-workload:
+    needs: publish
+    runs-on: ubuntu-24.04
+    # API and gateway workflows both write to the same GitOps branch. Serialising
+    # the promotion jobs avoids non-fast-forward pushes when both images are built.
+    concurrency:
+      group: devkit-workload-manifest-update
+      cancel-in-progress: false
+    steps:
+      - name: Verify GitOps repository token is configured
+        env:
+          WORKLOAD_REPO_TOKEN: ${{ secrets.WORKLOAD_REPO_TOKEN }}
+        run: |
+          test -n "$WORKLOAD_REPO_TOKEN" || {
+            echo "::error::Set the WORKLOAD_REPO_TOKEN repository secret before promoting GitOps images."
+            exit 1
+          }
+
+      - name: Check out GitOps repository
+        uses: actions/checkout@v5
+        with:
+          repository: syurodev/workload
+          ref: main
+          token: ${{ secrets.WORKLOAD_REPO_TOKEN }}
+          path: workload
+
+      - name: Promote API image in GitOps
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/dev-kit-api:sha-${{ github.sha }}
+          MANIFEST: workload/devkit/dev/backend/deployment.yaml
+        run: |
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          manifest = Path(os.environ["MANIFEST"])
+          image = os.environ["IMAGE"]
+          content = manifest.read_text()
+          updated, replacements = re.subn(
+              r"(?m)^(\s*image:\s*)ghcr\.io/[^/\s]+/dev-kit-api:[^\s#]+(\s*(?:#.*)?)$",
+              rf"\g<1>{image}\g<2>",
+              content,
+          )
+          if replacements != 1:
+              raise SystemExit(f"Expected exactly one API image in {manifest}, found {replacements}")
+          manifest.write_text(updated)
+          PY
+
+      - name: Commit and push GitOps promotion
+        working-directory: workload
+        run: |
+          git config user.name "devkit-gitops[bot]"
+          git config user.email "devkit-gitops[bot]@users.noreply.github.com"
+          git add devkit/dev/backend/deployment.yaml
+          if git diff --cached --quiet; then
+            echo "GitOps already references this API image."
+            exit 0
+          fi
+          git commit -m "deploy(devkit): api sha-${GITHUB_SHA}"
+          git push origin HEAD:main
