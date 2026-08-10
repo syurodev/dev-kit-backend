@@ -46,3 +46,4 @@ docs/superpowser/
 # Generated local gateway signing keys. Production keys must come from a
 # secret manager or a read-only mounted secret, never from Git.
 .local/
+.DS_Store
