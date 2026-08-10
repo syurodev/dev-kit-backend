@@ -33,7 +33,9 @@ public final class ReplicationRequestValidator {
             throw new ValidationException("replication operation is required");
         }
         var envelope = operation.envelope();
-        SyncIdentifier.require("idempotency key", operation.idempotencyKey(), WireLimits.MAX_IDENTIFIER_LENGTH);
+        // Idempotency keys are opaque, namespaced hashes. Unlike record and
+        // device identifiers, they are never interpreted as path segments.
+        SyncIdentifier.requireOpaque("idempotency key", operation.idempotencyKey(), WireLimits.MAX_IDENTIFIER_LENGTH);
         SyncIdentifier.require("record id", envelope.recordId(), WireLimits.MAX_IDENTIFIER_LENGTH);
         SyncIdentifier.require("record type", envelope.recordType(), WireLimits.MAX_RECORD_TYPE_LENGTH);
         SyncIdentifier.require("account id", envelope.accountId(), WireLimits.MAX_IDENTIFIER_LENGTH);
