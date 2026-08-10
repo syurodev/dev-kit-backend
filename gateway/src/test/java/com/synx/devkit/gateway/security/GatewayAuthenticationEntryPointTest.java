@@ -17,6 +17,8 @@ class GatewayAuthenticationEntryPointTest {
                 .isEqualTo("signing_key_unknown");
         assertThat(reason("Signed JWT rejected: Invalid signature")).isEqualTo("signature_invalid");
         assertThat(reason("The iss claim is not valid")).isEqualTo("issuer_invalid");
+        assertThat(reason("An error occurred while attempting to decode the Jwt: Required audience is missing"))
+                .isEqualTo("required_audience_missing");
     }
 
     @Test

@@ -65,13 +65,16 @@ public final class GatewayAuthenticationEntryPoint implements AuthenticationEntr
             return "invalid_token";
         }
         String normalized = description.toLowerCase(Locale.ROOT);
-        if ("required audience is missing".equals(normalized)) {
+        // JwtAuthenticationProvider wraps validator text with
+        // "An error occurred while attempting to decode the Jwt: ...".
+        // Match the stable validator fragment rather than requiring equality.
+        if (normalized.contains("required audience is missing")) {
             return "required_audience_missing";
         }
-        if ("token subject is missing".equals(normalized)) {
+        if (normalized.contains("token subject is missing")) {
             return "subject_missing";
         }
-        if (normalized.startsWith("jwt expired at ")) {
+        if (normalized.contains("jwt expired at ")) {
             return "expired";
         }
         if (normalized.contains("iss claim is not valid")) {
