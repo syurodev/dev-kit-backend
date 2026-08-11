@@ -4,6 +4,7 @@ import static org.springframework.security.test.web.servlet.request.SecurityMock
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -111,6 +112,111 @@ class SyncApiIT extends PostgresTestSupport {
     }
 
     @Test
+    void listDevicesShowsBothEnrolledDevicesWithCurrentFlag() throws Exception {
+        establishSession("device-a");
+        establishEnrolledSession("device-b", createEnrollment("device-a", "device-b"));
+
+        mvc.perform(get("/v1/sync/devices")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.devices", hasSize(2)))
+                .andExpect(jsonPath("$.devices[?(@.deviceId == 'device-a')].current").value(true))
+                .andExpect(jsonPath("$.devices[?(@.deviceId == 'device-b')].current").value(false))
+                .andExpect(jsonPath("$.devices[?(@.deviceId == 'device-a')].status").value("active"))
+                .andExpect(jsonPath("$.devices[?(@.deviceId == 'device-b')].status").value("active"));
+    }
+
+    @Test
+    void apiRevokeBlocksRevokedDeviceFromSync() throws Exception {
+        String accountId = establishSession("device-a");
+        establishEnrolledSession("device-b", createEnrollment("device-a", "device-b"));
+        PushRequest push = pushRequest(accountId, "device-b", "idem-b", "op-b", 1);
+
+        revokeDevice("device-a", "device-b");
+
+        mvc.perform(get("/v1/sync/session")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-b")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isForbidden());
+        mvc.perform(post("/v1/sync/push")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-b")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsBytes(push)))
+                .andExpect(status().isForbidden());
+        mvc.perform(get("/v1/sync/pull")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-b")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1")
+                        .queryParam("cursor", "")
+                        .queryParam("limit", "100"))
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    void apiRevokeRejectsLastActiveDevice() throws Exception {
+        establishSession("device-a");
+
+        mvc.perform(post("/v1/sync/devices/device-a/revoke")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.code").value("conflict"));
+    }
+
+    @Test
+    void apiRevokeUnknownDeviceReturnsNotFound() throws Exception {
+        establishSession("device-a");
+        establishEnrolledSession("device-b", createEnrollment("device-a", "device-b"));
+
+        mvc.perform(post("/v1/sync/devices/missing-device/revoke")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("not_found"));
+    }
+
+    @Test
+    void apiRevokeIsIdempotentForAlreadyRevokedDevice() throws Exception {
+        establishSession("device-a");
+        establishEnrolledSession("device-b", createEnrollment("device-a", "device-b"));
+
+        revokeDevice("device-a", "device-b");
+        mvc.perform(post("/v1/sync/devices/device-b/revoke")
+                        .with(identity())
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isOk());
+    }
+
+    @Test
+    void apiDevicesAreScopedToAccount() throws Exception {
+        establishSession("subject-1", "device-a");
+        establishSession("subject-2", "device-b");
+
+        mvc.perform(get("/v1/sync/devices")
+                        .with(identity("subject-1"))
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.devices", hasSize(1)))
+                .andExpect(jsonPath("$.devices[0].deviceId").value("device-a"));
+
+        mvc.perform(post("/v1/sync/devices/device-b/revoke")
+                        .with(identity("subject-1"))
+                        .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.code").value("not_found"));
+    }
+
+    @Test
     void revokedDeviceIsRejectedAndAccountsCannotReadEachOther() throws Exception {
         String firstAccount = establishSession("subject-1", "device-a");
         PushRequest first = pushRequest(firstAccount, "device-a", "idem-a", "op-a", 1);
@@ -133,7 +239,9 @@ class SyncApiIT extends PostgresTestSupport {
                 .andExpect(jsonPath("$.account_id").value(secondAccount))
                 .andExpect(jsonPath("$.operations").isEmpty());
 
-        jdbc.sql("UPDATE devices SET status = 'revoked' WHERE device_id = 'device-a'").update();
+        establishEnrolledSession("subject-1", "device-c", createEnrollment("subject-1", "device-a", "device-c"));
+        revokeDevice("subject-1", "device-c", "device-a");
+
         mvc.perform(get("/v1/sync/session")
                         .with(identity("subject-1"))
                         .header(SyncHeaderResolver.DEVICE_HEADER, "device-a")
@@ -242,6 +350,11 @@ class SyncApiIT extends PostgresTestSupport {
         return establishSession("keycloak-subject-1", deviceId, enrollmentToken);
     }
 
+    private String establishEnrolledSession(String subject, String deviceId, String enrollmentToken)
+            throws Exception {
+        return establishSession(subject, deviceId, enrollmentToken);
+    }
+
     private String establishSession(String subject, String deviceId) throws Exception {
         return establishSession(subject, deviceId, null);
     }
@@ -264,8 +377,13 @@ class SyncApiIT extends PostgresTestSupport {
     }
 
     private String createEnrollment(String authorizingDeviceId, String targetDeviceId) throws Exception {
+        return createEnrollment("keycloak-subject-1", authorizingDeviceId, targetDeviceId);
+    }
+
+    private String createEnrollment(String subject, String authorizingDeviceId, String targetDeviceId)
+            throws Exception {
         String json = mvc.perform(post("/v1/sync/devices/enrollments")
-                        .with(identity())
+                        .with(identity(subject))
                         .header(SyncHeaderResolver.DEVICE_HEADER, authorizingDeviceId)
                         .header(SyncHeaderResolver.PROTOCOL_HEADER, "1")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -276,6 +394,18 @@ class SyncApiIT extends PostgresTestSupport {
                 .getResponse()
                 .getContentAsString();
         return objectMapper.readTree(json).get("enrollment_token").asString();
+    }
+
+    private void revokeDevice(String callerDeviceId, String targetDeviceId) throws Exception {
+        revokeDevice("keycloak-subject-1", callerDeviceId, targetDeviceId);
+    }
+
+    private void revokeDevice(String subject, String callerDeviceId, String targetDeviceId) throws Exception {
+        mvc.perform(post("/v1/sync/devices/" + targetDeviceId + "/revoke")
+                        .with(identity(subject))
+                        .header(SyncHeaderResolver.DEVICE_HEADER, callerDeviceId)
+                        .header(SyncHeaderResolver.PROTOCOL_HEADER, "1"))
+                .andExpect(status().isOk());
     }
 
     private static PushRequest pushRequest(
