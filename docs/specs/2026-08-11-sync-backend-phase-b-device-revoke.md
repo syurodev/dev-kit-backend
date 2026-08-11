@@ -1,6 +1,6 @@
 # DevKit Sync Backend — Phase B Device Revoke Specification
 
-- Status: Design approved (not yet implemented)
+- Status: Implemented (`feat/phase-b-device-revoke`, `2060f39`)
 - Date: 2026-08-11
 - Backend repository: `/Users/syuro/Workspace/PERSONAL/dev-kit/dev-kit-backend`
 - Desktop: `/Users/syuro/Workspace/PERSONAL/dev-kit/dev-kit-app`
@@ -99,3 +99,12 @@ Response:
 
 Matches canonical design “Done when” checklist in
 `2026-08-11-be-phase-b-device-revoke-design.md`.
+
+## 9. Implementation evidence (2026-08-11)
+
+- `./gradlew :test --tests com.synx.devkit.e2e.SyncApiIT` → PASS
+- `./gradlew :gateway:test` → PASS (denylist filter)
+- Desktop (`02afaaa`): unit/bridge tests PASS; G4 rewritten to API revoke
+- Deployed matrix `TestG4RevokedDeviceRejected` not re-run this session — re-run
+  `go test ./cmd/synce2e/ -run TestG4RevokedDeviceRejected` against Compose when
+  verifying
