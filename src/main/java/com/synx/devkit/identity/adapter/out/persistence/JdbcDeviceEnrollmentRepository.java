@@ -73,4 +73,15 @@ public class JdbcDeviceEnrollmentRepository implements DeviceEnrollmentRepositor
                 .optional()
                 .isPresent();
     }
+
+    @Override
+    public int deleteByCreatedByDeviceId(UUID accountId, String createdByDeviceId) {
+        return jdbc.sql("""
+                        DELETE FROM device_enrollments
+                        WHERE account_id = :accountId AND created_by_device_id = :createdByDeviceId
+                        """)
+                .param("accountId", accountId)
+                .param("createdByDeviceId", createdByDeviceId)
+                .update();
+    }
 }

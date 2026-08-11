@@ -18,4 +18,6 @@ public interface DeviceEnrollmentRepository {
             String targetDeviceId,
             byte[] tokenDigest,
             Instant now);
+
+    int deleteByCreatedByDeviceId(UUID accountId, String createdByDeviceId);
 }

@@ -8,6 +8,7 @@ import java.sql.SQLException;
 import java.time.Instant;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -82,6 +83,40 @@ public class JdbcDeviceRepository implements DeviceRepository {
                         """)
                 .param("accountId", accountId)
                 .param("deviceId", deviceId)
+                .query(this::map)
+                .optional();
+    }
+
+    @Override
+    public List<Device> listByAccount(UUID accountId) {
+        return jdbc.sql("""
+                        SELECT id, account_id, device_id, status, protocol_version, first_seen_at, last_seen_at
+                        FROM devices WHERE account_id = :accountId ORDER BY first_seen_at ASC, device_id ASC
+                        """)
+                .param("accountId", accountId)
+                .query(this::map)
+                .list();
+    }
+
+    @Override
+    public long countActive(UUID accountId) {
+        return jdbc.sql("SELECT COUNT(*) FROM devices WHERE account_id = :accountId AND status = 'active'")
+                .param("accountId", accountId)
+                .query(Long.class)
+                .single();
+    }
+
+    @Override
+    public Optional<Device> revoke(UUID accountId, String deviceId, Instant now) {
+        return jdbc.sql("""
+                        UPDATE devices
+                        SET status = 'revoked', last_seen_at = :now
+                        WHERE account_id = :accountId AND device_id = :deviceId
+                        RETURNING id, account_id, device_id, status, protocol_version, first_seen_at, last_seen_at
+                        """)
+                .param("accountId", accountId)
+                .param("deviceId", deviceId)
+                .param("now", now.atOffset(ZoneOffset.UTC))
                 .query(this::map)
                 .optional();
     }
