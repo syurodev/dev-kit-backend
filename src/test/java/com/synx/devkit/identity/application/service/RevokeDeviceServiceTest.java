@@ -11,12 +11,14 @@ import com.synx.devkit.identity.application.port.in.ListDevicesCommand;
 import com.synx.devkit.identity.application.port.in.RevokeDeviceCommand;
 import com.synx.devkit.identity.application.port.out.DeviceEnrollmentRepository;
 import com.synx.devkit.identity.application.port.out.DeviceRepository;
+import com.synx.devkit.identity.application.port.out.DeviceRevocationDenylist;
 import com.synx.devkit.identity.domain.model.Device;
 import com.synx.devkit.identity.domain.model.DeviceStatus;
 import com.synx.devkit.shared.application.port.out.TransactionRunner;
 import com.synx.devkit.shared.error.ConflictException;
 import com.synx.devkit.shared.error.NotFoundException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
@@ -33,6 +35,7 @@ class RevokeDeviceServiceTest {
     private FakeDeviceRepository devices;
     private FakeDeviceEnrollmentRepository enrollments;
     private FakeAuditEventSink audit;
+    private FakeDeviceRevocationDenylist denylist;
     private RevokeDeviceService service;
 
     @BeforeEach
@@ -40,6 +43,7 @@ class RevokeDeviceServiceTest {
         devices = new FakeDeviceRepository();
         enrollments = new FakeDeviceEnrollmentRepository();
         audit = new FakeAuditEventSink();
+        denylist = new FakeDeviceRevocationDenylist();
         service = new RevokeDeviceService(
                 devices,
                 enrollments,
@@ -50,6 +54,7 @@ class RevokeDeviceServiceTest {
                         return work.get();
                     }
                 },
+                denylist,
                 Clock.fixed(NOW, ZoneOffset.UTC));
     }
 
@@ -59,6 +64,7 @@ class RevokeDeviceServiceTest {
         var command = command("device-a");
 
         assertThrows(ConflictException.class, () -> service.revoke(command));
+        assertTrue(denylist.puts.isEmpty());
     }
 
     @Test
@@ -74,6 +80,10 @@ class RevokeDeviceServiceTest {
         assertEquals("device-b", enrollments.deletedByCreator.getFirst());
         assertEquals(1, audit.events.size());
         assertEquals("device.revoked", audit.events.getFirst().eventType());
+        assertEquals(1, denylist.puts.size());
+        assertEquals("subject-1", denylist.puts.getFirst().subject());
+        assertEquals("device-b", denylist.puts.getFirst().deviceId());
+        assertEquals(Duration.ofSeconds(60), denylist.puts.getFirst().ttl());
     }
 
     @Test
@@ -86,6 +96,10 @@ class RevokeDeviceServiceTest {
 
         assertTrue(audit.events.isEmpty());
         assertTrue(enrollments.deletedByCreator.isEmpty());
+        assertEquals(1, denylist.puts.size());
+        assertEquals("subject-1", denylist.puts.getFirst().subject());
+        assertEquals("device-a", denylist.puts.getFirst().deviceId());
+        assertEquals(Duration.ofSeconds(60), denylist.puts.getFirst().ttl());
     }
 
     @Test
@@ -95,6 +109,7 @@ class RevokeDeviceServiceTest {
         var command = command("missing");
 
         assertThrows(NotFoundException.class, () -> service.revoke(command));
+        assertTrue(denylist.puts.isEmpty());
     }
 
     private static RevokeDeviceCommand command(String targetDeviceId) {
@@ -222,6 +237,17 @@ class RevokeDeviceServiceTest {
         @Override
         public void record(AuditEvent event) {
             events.add(event);
+        }
+    }
+
+    private record DenylistPut(String subject, String deviceId, Duration ttl) {}
+
+    private static final class FakeDeviceRevocationDenylist implements DeviceRevocationDenylist {
+        private final List<DenylistPut> puts = new ArrayList<>();
+
+        @Override
+        public void put(String subject, String deviceId, Duration ttl) {
+            puts.add(new DenylistPut(subject, deviceId, ttl));
         }
     }
 }

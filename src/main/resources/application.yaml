@@ -1,6 +1,11 @@
 spring:
   application:
     name: dev-kit
+  data:
+    redis:
+      host: ${DEVKIT_REDIS_HOST:localhost}
+      port: ${DEVKIT_REDIS_PORT:6379}
+      password: ${DEVKIT_REDIS_PASSWORD:}
   datasource:
     url: ${DEVKIT_DB_URL:}
     username: ${DEVKIT_DB_USER:}

@@ -6,21 +6,26 @@ import com.synx.devkit.identity.application.port.in.RevokeDeviceCommand;
 import com.synx.devkit.identity.application.port.in.RevokeDeviceUseCase;
 import com.synx.devkit.identity.application.port.out.DeviceEnrollmentRepository;
 import com.synx.devkit.identity.application.port.out.DeviceRepository;
+import com.synx.devkit.identity.application.port.out.DeviceRevocationDenylist;
 import com.synx.devkit.identity.domain.model.DeviceStatus;
 import com.synx.devkit.shared.application.port.out.TransactionRunner;
 import com.synx.devkit.shared.error.ConflictException;
 import com.synx.devkit.shared.error.NotFoundException;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 
 public final class RevokeDeviceService implements RevokeDeviceUseCase {
+    private static final Duration REVOCATION_DENYLIST_TTL = Duration.ofSeconds(60);
+
     private final DeviceRepository devices;
     private final DeviceEnrollmentRepository enrollments;
     private final AuditEventSink audit;
     private final TransactionRunner transactions;
+    private final DeviceRevocationDenylist denylist;
     private final Clock clock;
 
     public RevokeDeviceService(
@@ -28,11 +33,13 @@ public final class RevokeDeviceService implements RevokeDeviceUseCase {
             DeviceEnrollmentRepository enrollments,
             AuditEventSink audit,
             TransactionRunner transactions,
+            DeviceRevocationDenylist denylist,
             Clock clock) {
         this.devices = devices;
         this.enrollments = enrollments;
         this.audit = audit;
         this.transactions = transactions;
+        this.denylist = denylist;
         this.clock = clock;
     }
 
@@ -62,5 +69,6 @@ public final class RevokeDeviceService implements RevokeDeviceUseCase {
                     now));
             return null;
         });
+        denylist.put(command.subject(), command.targetDeviceId(), REVOCATION_DENYLIST_TTL);
     }
 }

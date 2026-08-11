@@ -8,6 +8,7 @@ import com.synx.devkit.identity.application.port.in.RevokeDeviceUseCase;
 import com.synx.devkit.identity.application.port.out.AccountRepository;
 import com.synx.devkit.identity.application.port.out.DeviceEnrollmentRepository;
 import com.synx.devkit.identity.application.port.out.DeviceRepository;
+import com.synx.devkit.identity.application.port.out.DeviceRevocationDenylist;
 import com.synx.devkit.identity.application.service.AuthorizeSyncRequestService;
 import com.synx.devkit.identity.application.service.CreateDeviceEnrollmentService;
 import com.synx.devkit.identity.application.service.DeviceEnrollmentTokenCodec;
@@ -93,8 +94,9 @@ public class ApplicationConfiguration {
             DeviceEnrollmentRepository enrollments,
             AuditEventSink audit,
             TransactionRunner transactions,
+            DeviceRevocationDenylist denylist,
             Clock clock) {
-        return new RevokeDeviceService(devices, enrollments, audit, transactions, clock);
+        return new RevokeDeviceService(devices, enrollments, audit, transactions, denylist, clock);
     }
 
     @Bean
