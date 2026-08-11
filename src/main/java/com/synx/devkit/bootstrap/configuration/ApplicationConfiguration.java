@@ -3,6 +3,8 @@ package com.synx.devkit.bootstrap.configuration;
 import com.synx.devkit.identity.application.port.in.AuthorizeSyncRequestUseCase;
 import com.synx.devkit.identity.application.port.in.CreateDeviceEnrollmentUseCase;
 import com.synx.devkit.identity.application.port.in.EstablishSyncSessionUseCase;
+import com.synx.devkit.identity.application.port.in.ListDevicesUseCase;
+import com.synx.devkit.identity.application.port.in.RevokeDeviceUseCase;
 import com.synx.devkit.identity.application.port.out.AccountRepository;
 import com.synx.devkit.identity.application.port.out.DeviceEnrollmentRepository;
 import com.synx.devkit.identity.application.port.out.DeviceRepository;
@@ -10,6 +12,8 @@ import com.synx.devkit.identity.application.service.AuthorizeSyncRequestService;
 import com.synx.devkit.identity.application.service.CreateDeviceEnrollmentService;
 import com.synx.devkit.identity.application.service.DeviceEnrollmentTokenCodec;
 import com.synx.devkit.identity.application.service.EstablishSyncSessionService;
+import com.synx.devkit.identity.application.service.ListDevicesService;
+import com.synx.devkit.identity.application.service.RevokeDeviceService;
 import com.synx.devkit.audit.application.port.out.AuditEventSink;
 import com.synx.devkit.replication.application.port.in.PullReplicationUseCase;
 import com.synx.devkit.replication.application.port.in.PushReplicationUseCase;
@@ -76,6 +80,21 @@ public class ApplicationConfiguration {
             AccountRepository accounts,
             DeviceRepository devices) {
         return new AuthorizeSyncRequestService(accounts, devices);
+    }
+
+    @Bean
+    ListDevicesUseCase listDevicesUseCase(DeviceRepository devices) {
+        return new ListDevicesService(devices);
+    }
+
+    @Bean
+    RevokeDeviceUseCase revokeDeviceUseCase(
+            DeviceRepository devices,
+            DeviceEnrollmentRepository enrollments,
+            AuditEventSink audit,
+            TransactionRunner transactions,
+            Clock clock) {
+        return new RevokeDeviceService(devices, enrollments, audit, transactions, clock);
     }
 
     @Bean
