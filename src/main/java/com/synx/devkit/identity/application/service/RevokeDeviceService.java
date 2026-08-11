@@ -14,8 +14,6 @@ import com.synx.devkit.shared.error.NotFoundException;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.List;
-import java.util.Locale;
 import java.util.Map;
 
 public final class RevokeDeviceService implements RevokeDeviceUseCase {
