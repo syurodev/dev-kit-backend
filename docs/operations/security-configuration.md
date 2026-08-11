@@ -51,7 +51,9 @@ superuser, createdb hoặc createrole. Hai role không dùng chung với Keycloa
 `devkit-db-role-init` tạo/cập nhật DML role và default privilege; sau đó
 `devkit-migrate` chạy Liquibase bằng owner trước khi API được phép start.
 PostgreSQL uniqueness, transaction, advisory lock và atomic quota reservation
-là correctness source; Redis không cần cho Phase A.
+là correctness source; Redis không cần cho Phase A. Phase B device-revoke
+(design) thêm Redis **chỉ** làm edge denylist TTL 60s sau revoke — không đưa
+Redis vào correctness path của push/pull.
 
 ## Device enrollment và abuse protection
 
@@ -83,7 +85,9 @@ là correctness source; Redis không cần cho Phase A.
 
 Rate limit hiện là per-instance để không thêm Redis quá sớm. Deployment nhiều
 gateway cần thêm distributed limiter ở trusted edge. Key rotation runbook,
-backup/restore và revoke-management UI vẫn là follow-up.
+backup/restore và revoke-management UI polish vẫn là follow-up. Self-service
+device list/revoke API + Redis device denylist TTL 60s: xem
+`docs/specs/2026-08-11-sync-backend-phase-b-device-revoke.md`.
 
 ## Keycloak image patch policy
 
