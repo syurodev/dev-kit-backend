@@ -30,7 +30,11 @@ docker compose ps
 ```
 
 Compose tách `keycloak-db` và `devkit-db` bằng database, user, volume và network
-riêng. Backend không kết nối vào Keycloak database.
+riêng. Backend không kết nối vào Keycloak database. Redis (`redis`) chạy luôn
+trên `sync-private-network` cho API và Gateway; đặt `DEVKIT_REDIS_PASSWORD` trong
+`.env` (Compose inject `DEVKIT_REDIS_HOST=redis`, port `6379`). Redis không
+publish port ra host — chỉ dùng trong stack Compose.
+
 
 Lần đầu Keycloak start với volume mới, `keycloak/realm-devkit.json` được
 import thành realm `devkit`. Import không tạo user. Tạo user local qua Admin
@@ -63,7 +67,14 @@ export DEVKIT_GATEWAY_ISSUER="https://gateway.local"
 export DEVKIT_GATEWAY_JWK_SET_URI="https://gateway.local/.well-known/jwks.json"
 export DEVKIT_GATEWAY_AUDIENCE="devkit-sync-api"
 export DEVKIT_KEYCLOAK_ISSUER="http://localhost:8081/realms/devkit"
+export DEVKIT_REDIS_HOST="localhost"
+export DEVKIT_REDIS_PORT="6379"
+export DEVKIT_REDIS_PASSWORD="$DEVKIT_REDIS_PASSWORD"
 ```
+
+Khi chạy API/Gateway ngoài Docker, cần Redis reachable từ host (ví dụ container
+riêng hoặc `docker run` loopback); stack Compose đã cấp Redis nội bộ cho cả hai
+service.
 
 Không copy các giá trị thật vào README, test fixture hoặc log build.
 
