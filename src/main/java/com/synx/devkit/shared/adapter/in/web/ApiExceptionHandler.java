@@ -1,7 +1,9 @@
 package com.synx.devkit.shared.adapter.in.web;
 
+import com.synx.devkit.shared.error.ConflictException;
 import com.synx.devkit.shared.error.DomainException;
 import com.synx.devkit.shared.error.ForbiddenException;
+import com.synx.devkit.shared.error.NotFoundException;
 import com.synx.devkit.shared.error.QuotaExceededException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.slf4j.Logger;
@@ -22,6 +24,16 @@ public final class ApiExceptionHandler {
     @ExceptionHandler(ForbiddenException.class)
     ResponseEntity<ApiErrorResponse> forbidden(ForbiddenException error, HttpServletRequest request) {
         return response(HttpStatus.FORBIDDEN, error.code(), "Request is forbidden", request);
+    }
+
+    @ExceptionHandler(NotFoundException.class)
+    ResponseEntity<ApiErrorResponse> notFound(NotFoundException error, HttpServletRequest request) {
+        return response(HttpStatus.NOT_FOUND, error.code(), "Resource was not found", request);
+    }
+
+    @ExceptionHandler(ConflictException.class)
+    ResponseEntity<ApiErrorResponse> conflict(ConflictException error, HttpServletRequest request) {
+        return response(HttpStatus.CONFLICT, error.code(), "Request conflicts with current state", request);
     }
 
     @ExceptionHandler(DomainException.class)
