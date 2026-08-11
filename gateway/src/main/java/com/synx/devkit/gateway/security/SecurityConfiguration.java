@@ -75,6 +75,16 @@ public class SecurityConfiguration {
     }
 
     @Bean
+    RevokedDeviceDenylist revokedDeviceDenylist(StringRedisTemplate redisTemplate) {
+        return new RevokedDeviceDenylist(redisTemplate);
+    }
+
+    @Bean
+    RevokedDeviceDenylistFilter revokedDeviceDenylistFilter(RevokedDeviceDenylist denylist) {
+        return new RevokedDeviceDenylistFilter(denylist);
+    }
+
+    @Bean
     JwtDecoder keycloakJwtDecoder(KeycloakJwtProperties properties) {
         NimbusJwtDecoder decoder = NimbusJwtDecoder.withJwkSetUri(properties.getJwkSetUri()).build();
         decoder.setJwtValidator(new DelegatingOAuth2TokenValidator<>(
@@ -91,6 +101,7 @@ public class SecurityConfiguration {
             DesktopConfigRateLimitFilter desktopConfigRateLimitFilter,
             IpRateLimitFilter ipRateLimitFilter,
             SubjectAbuseProtectionFilter subjectAbuseProtectionFilter,
+            RevokedDeviceDenylistFilter revokedDeviceDenylistFilter,
             GatewayIdentityRelayFilter identityRelayFilter,
             GatewayAuthenticationEntryPoint authenticationEntryPoint) throws Exception {
         return http
@@ -114,7 +125,8 @@ public class SecurityConfiguration {
                 .addFilterBefore(desktopClientHeaderFilter, DesktopConfigRateLimitFilter.class)
                 .addFilterBefore(ipRateLimitFilter, BearerTokenAuthenticationFilter.class)
                 .addFilterAfter(subjectAbuseProtectionFilter, BearerTokenAuthenticationFilter.class)
-                .addFilterAfter(identityRelayFilter, SubjectAbuseProtectionFilter.class)
+                .addFilterAfter(revokedDeviceDenylistFilter, SubjectAbuseProtectionFilter.class)
+                .addFilterAfter(identityRelayFilter, RevokedDeviceDenylistFilter.class)
                 .build();
     }
 }

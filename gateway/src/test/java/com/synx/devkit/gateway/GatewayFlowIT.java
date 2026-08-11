@@ -27,6 +27,7 @@ import java.util.Date;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicReference;
+import com.synx.devkit.gateway.security.RevokedDeviceDenylist;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,9 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.when;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class GatewayFlowIT {
@@ -49,6 +53,9 @@ class GatewayFlowIT {
 
     @LocalServerPort
     private int gatewayPort;
+
+    @MockitoBean
+    private RevokedDeviceDenylist revokedDeviceDenylist;
 
     @DynamicPropertySource
     static void configure(DynamicPropertyRegistry registry) {
@@ -120,6 +127,24 @@ class GatewayFlowIT {
         assertThat(internal.getJWTClaimsSet().getSubject()).isEqualTo("keycloak-user-1");
         assertThat(internal.getJWTClaimsSet().getStringClaim("upstream_iss"))
                 .isEqualTo(KEYCLOAK_ISSUER);
+    }
+
+    @Test
+    void revokedDeviceIsRejectedBeforeBackend() throws Exception {
+        when(revokedDeviceDenylist.isDenied(eq("keycloak-user-1"), eq("revoked-device-a")))
+                .thenReturn(true);
+        HttpRequest request = HttpRequest.newBuilder(gatewayUri("/v1/sync/session"))
+                .header("Authorization", "Bearer " + keycloakToken(List.of("devkit-sync-gateway")))
+                .header("Content-Type", "application/json")
+                .header("X-DevKit-Device-ID", "revoked-device-a")
+                .POST(HttpRequest.BodyPublishers.ofString("{}"))
+                .build();
+
+        HttpResponse<String> response =
+                HttpClient.newHttpClient().send(request, HttpResponse.BodyHandlers.ofString());
+
+        assertThat(response.statusCode()).isEqualTo(403);
+        assertThat(BACKEND_HEADERS.get()).isNull();
     }
 
     @Test
