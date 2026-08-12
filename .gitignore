@@ -52,3 +52,4 @@ docs/superpowers/*
 .agents/
 .codex/
 .cursor/.superpowers/.worktrees/
+.superpowers/
